@@ -351,7 +351,7 @@ services:
     env_file:
       - .env
     ports:
-      - 30000:30000
+      - "127.0.0.1:30000:30000"
     environment:
       MINERU_MODEL_SOURCE: local
     entrypoint: mineru-vllm-server
@@ -389,13 +389,14 @@ services:
     env_file:
       - .env
     ports:
-      - 30001:30001
+      - "127.0.0.1:30001:30001"
     environment:
       MINERU_MODEL_SOURCE: local
     entrypoint: mineru-api
     command:
       --host 0.0.0.0
       --port 30001
+      --allow-public-http-client
     ulimits:
       memlock: -1
       stack: 67108864

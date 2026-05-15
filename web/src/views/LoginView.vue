@@ -14,26 +14,24 @@
       </div>
     </div>
 
-    <!-- 顶部导航：品牌名称 & 操作按钮 -->
-    <nav class="login-navbar">
-      <div class="navbar-content">
-        <div class="brand-container" @click="goHome" style="cursor: pointer">
-          <img v-if="brandLogo" :src="brandLogo" alt="logo" class="brand-logo" />
-          <h1 class="brand-text">
-            <span v-if="brandOrgName" class="brand-org">{{ brandOrgName }}</span>
-            <span v-if="brandOrgName && brandName !== brandOrgName" class="brand-separator"></span>
-            <span class="brand-main">{{ brandName }}</span>
-          </h1>
-        </div>
-      </div>
-    </nav>
-
     <!-- 主要内容区：居中卡片 -->
     <main class="login-main">
+      <!-- 顶部品牌：移动到登录面板上方 -->
+      <nav class="login-navbar login-navbar--in-panel">
+        <div class="navbar-content">
+          <div class="brand-container" @click="goHome" style="cursor: pointer">
+            <img v-if="brandLogo" :src="brandLogoUrl" alt="logo" class="brand-logo" />
+            <h1 class="brand-text">
+              <span class="brand-main">{{ brandName }}</span>
+            </h1>
+          </div>
+        </div>
+      </nav>
+
       <div class="login-card">
         <!-- 左侧图片 -->
         <div class="card-side is-image">
-          <img :src="loginBgImage" alt="登录背景" class="login-bg-image" />
+          <img :src="loginBgImageUrl" alt="登录背景" class="login-bg-image" />
         </div>
 
         <!-- 右侧表单 -->
@@ -160,7 +158,7 @@
                   >
                     <a-input v-model:value="loginForm.loginId" placeholder="用户ID或手机号">
                       <template #prefix>
-                        <user-icon size="18" />
+                        <img :src="userIconUrl" alt="" class="input-icon" />
                       </template>
                     </a-input>
                   </a-form-item>
@@ -172,7 +170,10 @@
                   >
                     <a-input-password v-model:value="loginForm.password">
                       <template #prefix>
-                        <lock-icon size="18" />
+                        <img :src="lockIconUrl" alt="" class="input-icon" />
+                      </template>
+                      <template #iconRender>
+                        <img :src="passwordToggleIconUrl" alt="" class="password-toggle-icon" />
                       </template>
                     </a-input-password>
                   </a-form-item>
@@ -262,7 +263,7 @@
         <a href="https://github.com/xerrors/Yuxi" target="_blank">使用帮助</a>
       </div>
       <div class="copyright">
-        &copy; {{ new Date().getFullYear() }} {{ brandName }}. All Rights Reserved.
+        {{ footerCopyright }}
       </div>
     </footer>
   </div>
@@ -278,8 +279,6 @@ import { message } from 'ant-design-vue'
 import { healthApi } from '@/apis/system_api'
 import { authApi } from '@/apis/auth_api'
 import {
-  User as UserIcon,
-  Lock as LockIcon,
   Key as KeyIcon,
   AlertCircle as ExclamationCircleIcon
 } from 'lucide-vue-next'
@@ -290,12 +289,31 @@ const userStore = useUserStore()
 const infoStore = useInfoStore()
 const agentStore = useAgentStore()
 
+const userIconUrl = '/Container.png'
+const lockIconUrl = '/Container(1).png'
+const passwordToggleIconUrl = '/Button.png'
+
+const normalizeAssetUrl = (url) => {
+  if (!url) return ''
+  try {
+    return encodeURI(url)
+  } catch {
+    return url
+  }
+}
+
 // 品牌展示数据
 const loginBgImage = computed(() => {
   return infoStore.organization?.login_bg || '/login-bg.jpg'
 })
+const loginBgImageUrl = computed(() => {
+  return normalizeAssetUrl(loginBgImage.value)
+})
 const brandLogo = computed(() => {
   return infoStore.organization?.logo || ''
+})
+const brandLogoUrl = computed(() => {
+  return normalizeAssetUrl(brandLogo.value)
 })
 const brandOrgName = computed(() => {
   return infoStore.organization?.name?.trim() || ''
@@ -318,6 +336,12 @@ const privacyPolicyUrl = computed(() => {
 })
 const showAgreementConsent = computed(() => {
   return Boolean(userAgreementUrl.value && privacyPolicyUrl.value)
+})
+const footerCopyright = computed(() => {
+  return (
+    infoStore.footer?.copyright?.trim() ||
+    `© ${new Date().getFullYear()} ${brandName.value}. All Rights Reserved.`
+  )
 })
 
 // 状态
@@ -620,6 +644,8 @@ onMounted(async () => {
     return
   }
 
+  await infoStore.loadInfoConfig(true)
+
   // 显示 OIDC 认证失败的错误信息（由后端重定向携带）
   if (route.query.oidc_error) {
     errorMessage.value = String(route.query.oidc_error)
@@ -648,9 +674,43 @@ onUnmounted(() => {
   position: relative;
   display: flex;
   flex-direction: column;
-  background-color: var(--gray-10);
-  background-image: radial-gradient(var(--gray-200) 1px, transparent 1px);
-  background-size: 24px 24px;
+  background: linear-gradient(135deg, var(--main-40) 0%, var(--main-20) 45%, var(--main-30) 100%);
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      radial-gradient(
+        circle at 85% 18%,
+        color-mix(in srgb, var(--main-400) 22%, transparent) 0,
+        transparent 48%
+      ),
+      radial-gradient(
+        circle at 15% 28%,
+        color-mix(in srgb, var(--main-400) 16%, transparent) 0,
+        transparent 52%
+      ),
+      radial-gradient(
+        circle at 90% 60%,
+        color-mix(in srgb, var(--main-400) 10%, transparent) 0,
+        transparent 55%
+      );
+    pointer-events: none;
+  }
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      radial-gradient(color-mix(in srgb, var(--main-400) 28%, transparent) 1px, transparent 1px),
+      radial-gradient(color-mix(in srgb, var(--main-400) 16%, transparent) 1px, transparent 1px);
+    background-size: 18px 18px, 28px 28px;
+    background-position: 0 0, 80% 20%;
+    opacity: 0.35;
+    pointer-events: none;
+  }
 
   &.has-alert {
     padding-top: 60px;
@@ -659,19 +719,14 @@ onUnmounted(() => {
 
 /* Unified Navbar */
 .login-navbar {
-  position: absolute;
-  top: 0;
-  left: 0;
   width: 100%;
-  padding: 32px 0;
-  z-index: 10;
 
   .navbar-content {
-    max-width: 1500px; /* Constraint the width */
+    max-width: 1500px;
     margin: 0 auto;
     padding: 0 40px;
     display: flex;
-    justify-content: space-between;
+    justify-content: center;
     align-items: center;
     .brand-container {
       display: flex;
@@ -681,17 +736,27 @@ onUnmounted(() => {
   }
 }
 
+.login-navbar--in-panel {
+  position: static;
+  z-index: 2;
+  margin-bottom: 44px;
+
+  .navbar-content {
+    padding: 0 20px;
+  }
+}
+
 .brand-text {
   margin: 0;
-  font-size: 20px;
+  font-size: 28px;
   font-weight: 600;
-  line-height: 1;
+  line-height: 1.1;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 
   .brand-org {
-    color: var(--gray-700);
+    color: var(--color-text);
     font-weight: 600;
   }
 
@@ -704,13 +769,13 @@ onUnmounted(() => {
   }
 
   .brand-main {
-    color: var(--main-color);
+    color: var(--color-text);
     font-weight: 600;
   }
 }
 
 .brand-logo {
-  height: 32px;
+  height: 34px;
   width: auto;
   object-fit: contain;
 }
@@ -734,19 +799,23 @@ onUnmounted(() => {
 .login-main {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: 20px;
-  padding-top: 80px; /* Add space for navbar */
+  padding-top: 60px;
+  position: relative;
+  z-index: 2;
 }
 
 .login-card {
-  width: 900px;
+  width: 1120px;
   max-width: 95vw;
-  height: 560px;
-  background: var(--gray-0);
-  border-radius: 16px;
-  box-shadow: 0 0px 40px var(--shadow-1);
+  height: 520px;
+  background: color-mix(in srgb, var(--gray-0) 92%, transparent);
+  backdrop-filter: blur(6px);
+  border-radius: 12px;
+  box-shadow: 0 10px 40px var(--shadow-2);
   display: flex;
   overflow: hidden;
 }
@@ -757,9 +826,13 @@ onUnmounted(() => {
 
 /* Image Side */
 .card-side.is-image {
-  flex: 1.4;
-  background-color: var(--main-10);
+  flex: 1;
+  background: linear-gradient(180deg, var(--main-50) 0%, var(--main-20) 100%);
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px dashed color-mix(in srgb, var(--main-400) 35%, transparent);
 
   .login-bg-image {
     width: 100%;
@@ -775,26 +848,24 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 40px;
+  padding: 56px 68px;
 }
 
 .form-wrapper {
   width: 100%;
-  max-width: 320px;
+  max-width: 340px;
   display: flex;
   flex-direction: column;
-  gap: 32px;
+  gap: 18px;
 }
 
 .form-header {
   text-align: left;
   .welcome-text {
-    font-size: 14px;
+    font-size: 18px;
     font-weight: 600;
-    color: var(--gray-500);
-    margin-bottom: 4px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    color: var(--color-text);
+    margin: 0;
   }
   .init-title {
     font-size: 18px;
@@ -806,18 +877,67 @@ onUnmounted(() => {
 }
 
 .login-form {
-  :deep(.ant-input-affix-wrapper) {
-    padding: 10px 12px;
-    border-radius: 8px;
+  :deep(.ant-form-item) {
+    margin-bottom: 14px;
   }
+
+  :deep(.ant-form-item-label > label) {
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    font-weight: 500;
+  }
+
+  :deep(.ant-input-affix-wrapper) {
+    padding: 8px 12px;
+    border-radius: 6px;
+    border-color: color-mix(in srgb, var(--gray-1000) 14%, transparent);
+    background: var(--color-bg-elevated);
+
+    &:hover {
+      border-color: color-mix(in srgb, var(--main-color) 55%, transparent);
+    }
+
+    &.ant-input-affix-wrapper-focused {
+      border-color: color-mix(in srgb, var(--main-color) 75%, transparent);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--main-color) 18%, transparent);
+    }
+  }
+
+  :deep(.ant-input) {
+    font-size: 13px;
+  }
+
   :deep(.ant-btn) {
     height: 44px;
     font-size: 16px;
-    border-radius: 8px;
+    border-radius: 6px;
   }
   :deep(.ant-input-prefix) {
     margin-right: 8px;
     color: var(--gray-500);
+  }
+}
+
+.input-icon {
+  width: 16px;
+  height: 16px;
+  opacity: 0.75;
+}
+
+.password-toggle-icon {
+  width: 16px;
+  height: 16px;
+  opacity: 0.75;
+}
+
+:deep(.ant-btn-primary) {
+  background: linear-gradient(90deg, #2d7cff 0%, #1c60ff 100%);
+  border: none;
+  box-shadow: 0 8px 18px rgba(28, 96, 255, 0.22);
+
+  &:hover {
+    background: linear-gradient(90deg, #2d7cff 0%, #1c60ff 100%);
+    opacity: 0.92;
   }
 }
 
@@ -929,6 +1049,8 @@ onUnmounted(() => {
 .page-footer {
   padding: 24px;
   text-align: center;
+  position: relative;
+  z-index: 2;
 }
 
 .footer-links {
@@ -1020,7 +1142,7 @@ onUnmounted(() => {
   }
 
   .brand-text {
-    font-size: 20px;
+    font-size: 18px;
   }
 
   .login-card {
