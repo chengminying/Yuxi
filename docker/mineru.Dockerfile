@@ -1,9 +1,10 @@
 # Use DaoCloud mirrored vllm image for China region for gpu with Ampere architecture and above (Compute Capability>=8.0)
 # Compute Capability version query (https://developer.nvidia.com/cuda-gpus)
-FROM docker.m.daocloud.io/vllm/vllm-openai:v0.10.1.1
+ARG VLLM_OPENAI_IMAGE=docker.m.daocloud.io/vllm/vllm-openai:v0.9.2
+FROM ${VLLM_OPENAI_IMAGE}
 
 # Use the official vllm image
-# FROM vllm/vllm-openai:v0.10.1.1
+# FROM vllm/vllm-openai:v0.9.2
 
 # Use DaoCloud mirrored vllm image for China region for gpu with Turing architecture and below (Compute Capability<8.0)
 # FROM docker.m.daocloud.io/vllm/vllm-openai:v0.10.2
