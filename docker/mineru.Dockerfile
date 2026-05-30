@@ -1,6 +1,6 @@
 # Use DaoCloud mirrored vllm image for China region for gpu with Ampere architecture and above (Compute Capability>=8.0)
 # Compute Capability version query (https://developer.nvidia.com/cuda-gpus)
-ARG VLLM_OPENAI_IMAGE=docker.m.daocloud.io/vllm/vllm-openai:v0.9.2
+ARG VLLM_OPENAI_IMAGE=docker.m.daocloud.io/vllm/vllm-openai:v0.9.2-cuda12.2
 FROM ${VLLM_OPENAI_IMAGE}
 
 # Use the official vllm image
@@ -26,6 +26,34 @@ RUN apt-get update && \
 # Install mineru latest
 RUN python3 -m pip install -U 'mineru[core]' -i https://mirrors.aliyun.com/pypi/simple --break-system-packages && \
     python3 -m pip cache purge
+
+RUN python3 - <<'PY'
+import pathlib
+import re
+import site
+
+def patch_file(path: pathlib.Path) -> bool:
+    content = path.read_text(encoding="utf-8")
+    if "exist_ok=True" in content:
+        return False
+    pattern = r'AutoConfig\.register\(\s*["\']aimv2["\']\s*,\s*AIMv2Config\s*\)'
+    if not re.search(pattern, content):
+        return False
+    content = re.sub(
+        pattern,
+        'AutoConfig.register("aimv2", AIMv2Config, exist_ok=True)',
+        content,
+        count=1,
+    )
+    path.write_text(content, encoding="utf-8")
+    return True
+
+for base in site.getsitepackages():
+    candidate = pathlib.Path(base) / "vllm" / "transformers_utils" / "configs" / "ovis.py"
+    if candidate.exists():
+        patch_file(candidate)
+raise SystemExit(0)
+PY
 
 # Download models and update the configuration file
 RUN /bin/bash -c "mineru-models-download -s modelscope -m all"
