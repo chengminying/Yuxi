@@ -18,9 +18,9 @@ MCP（Model Context Protocol）是扩展智能体能力的重要方式。系统�
 
 ```json
 {
-    "name": "sequentialthinking",
+    "name": "custom-remote-mcp",
     "transport": "streamable_http",
-    "url": "https://remote.mcpservers.org/sequentialthinking/mcp"
+    "url": "https://example.com/mcp"
 }
 ```
 
@@ -43,8 +43,10 @@ MCP（Model Context Protocol）是扩展智能体能力的重要方式。系统�
 
 管理界面使用“添加 / 移除”语义管理 MCP 服务器：
 
-- 已添加：`enabled=true`，会加载到运行时缓存并可供 Agent 使用
+- 已添加：`enabled=true`，运行时按服务器 slug 直接读取数据库中的最新配置并建立连接
 - 可添加：`enabled=false`，记录保留但不会进入运行时
+
+Agent 配置中的 `mcps` 决定本次运行可使用哪些已添加服务器；未显式配置时使用当前用户可见的全部服务器。工具对象会按配置哈希做本地缓存，更新服务器配置后会自动使用新的缓存键，不需要重启服务。
 
 ## 工具管理
 

@@ -9,11 +9,7 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
   const threads = ref([])
   const currentThreadId = ref(null)
   const hasMoreThreads = ref(true)
-  const isLoadingThreads = ref(false)
   const isLoadingMoreThreads = ref(false)
-  const isCreatingThread = ref(false)
-  const isDeletingThread = ref(false)
-  const isRenamingThread = ref(false)
 
   const currentThread = computed(() => {
     if (!currentThreadId.value) return null
@@ -24,14 +20,17 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     currentThreadId.value = threadId || null
   }
 
-  const clearThreads = () => {
-    threads.value = []
-    currentThreadId.value = null
-    hasMoreThreads.value = true
+  const upsertThread = (thread) => {
+    if (!thread?.id) return
+    const index = threads.value.findIndex((item) => item.id === thread.id)
+    if (index >= 0) {
+      threads.value[index] = { ...threads.value[index], ...thread }
+      return
+    }
+    threads.value = [thread, ...threads.value]
   }
 
   const loadThreads = async (agentId = null) => {
-    isLoadingThreads.value = true
     try {
       const fetchedThreads = await threadApi.getThreads(agentId, PAGE_SIZE, 0)
       threads.value = fetchedThreads || []
@@ -47,8 +46,6 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
       console.error('Failed to fetch threads:', error)
       handleChatError(error, 'fetch')
       throw error
-    } finally {
-      isLoadingThreads.value = false
     }
   }
 
@@ -75,12 +72,11 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     }
   }
 
-  const createThread = async (agentId, title = '新的对话') => {
+  const createThread = async (agentId, title = '新的对话', metadata = {}) => {
     if (!agentId) return null
 
-    isCreatingThread.value = true
     try {
-      const thread = await threadApi.createThread(agentId, title)
+      const thread = await threadApi.createThread(agentId, title, metadata)
       if (thread) {
         threads.value = [thread, ...threads.value.filter((item) => item.id !== thread.id)]
       }
@@ -89,15 +85,12 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
       console.error('Failed to create thread:', error)
       handleChatError(error, 'create')
       throw error
-    } finally {
-      isCreatingThread.value = false
     }
   }
 
   const deleteThread = async (threadId) => {
     if (!threadId) return
 
-    isDeletingThread.value = true
     try {
       await threadApi.deleteThread(threadId)
       threads.value = threads.value.filter((thread) => thread.id !== threadId)
@@ -108,50 +101,29 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
       console.error('Failed to delete thread:', error)
       handleChatError(error, 'delete')
       throw error
-    } finally {
-      isDeletingThread.value = false
     }
   }
 
-  const updateThread = async (threadId, title, isPinned) => {
+  const updateThread = async (threadId, title, isPinned, toolApprovalMode) => {
     if (!threadId) return
 
-    if (title) {
-      const normalizedTitle = String(title).replace(/\s+/g, ' ').trim().slice(0, 255)
-      if (!normalizedTitle) return
+    const normalizedTitle = title ? String(title).replace(/\s+/g, ' ').trim().slice(0, 255) : null
+    if (title && !normalizedTitle) return
+    if (!normalizedTitle && isPinned === undefined && toolApprovalMode === undefined) return
 
-      isRenamingThread.value = true
-      try {
-        await threadApi.updateThread(threadId, normalizedTitle, isPinned)
-        const thread = threads.value.find((item) => item.id === threadId)
-        if (thread) {
-          thread.title = normalizedTitle
-          if (isPinned !== undefined) {
-            thread.is_pinned = isPinned
-          }
-        }
-      } catch (error) {
-        console.error('Failed to update thread:', error)
-        handleChatError(error, 'update')
-        throw error
-      } finally {
-        isRenamingThread.value = false
-      }
-      return
-    }
-
-    if (isPinned !== undefined) {
-      try {
-        await threadApi.updateThread(threadId, null, isPinned)
-        const thread = threads.value.find((item) => item.id === threadId)
-        if (thread) {
-          thread.is_pinned = isPinned
-        }
-      } catch (error) {
-        console.error('Failed to update thread pin status:', error)
-        handleChatError(error, 'update')
-        throw error
-      }
+    try {
+      const updatedThread = await threadApi.updateThread(
+        threadId,
+        normalizedTitle,
+        isPinned,
+        toolApprovalMode
+      )
+      upsertThread(updatedThread)
+      return updatedThread
+    } catch (error) {
+      console.error('Failed to update thread:', error)
+      handleChatError(error, 'update')
+      throw error
     }
   }
 
@@ -160,13 +132,9 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     currentThreadId,
     currentThread,
     hasMoreThreads,
-    isLoadingThreads,
     isLoadingMoreThreads,
-    isCreatingThread,
-    isDeletingThread,
-    isRenamingThread,
     setCurrentThreadId,
-    clearThreads,
+    upsertThread,
     loadThreads,
     loadMoreThreads,
     createThread,

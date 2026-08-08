@@ -5,6 +5,13 @@ const createOnGoingConvState = () => ({
   toolCallBuffers: {}
 })
 
+const IDLE_QUEUE_SNAPSHOT = Object.freeze({
+  status: 'idle',
+  paused_reason: null,
+  blocking_run_id: null,
+  can_continue: false
+})
+
 export function useAgentThreadState({
   chatState,
   getCurrentThreadId,
@@ -23,15 +30,22 @@ export function useAgentThreadState({
     if (!chatState.threadStates[threadId]) {
       chatState.threadStates[threadId] = {
         isStreaming: false,
-        streamAbortController: null,
         runStreamAbortController: null,
         activeRunId: null,
-        runLastSeq: '0',
+        activeRunSteerable: false,
+        runLastSeq: '0-0',
         lastRetryableJobTry: null,
         replyLoadingVisible: false,
         pendingRequestId: null,
+        pendingInterrupt: null,
+        agentStateRequestVersion: 0,
         onGoingConv: createOnGoingConvState(),
-        agentState: null
+        agentState: null,
+        contextCompressing: false,
+        queuedRequests: [],
+        queueSnapshot: { ...IDLE_QUEUE_SNAPSHOT },
+        continueQueueInFlight: false,
+        requestStreams: {}
       }
     }
     return chatState.threadStates[threadId]
@@ -39,17 +53,16 @@ export function useAgentThreadState({
 
   const stopThreadStream = (threadId) => {
     if (!threadId) return
-    const threadState = chatState.threadStates[threadId]
     if (typeof onStopThread === 'function') {
       onStopThread(threadId)
     }
+  }
 
-    if (!threadState?.streamAbortController) return
-
-    threadState.streamAbortController.abort()
-    threadState.streamAbortController = null
-    threadState.isStreaming = false
-    resetThreadUiState(threadState)
+  const abortAllRequestStreams = (threadState) => {
+    if (!threadState?.requestStreams) return
+    for (const entry of Object.values(threadState.requestStreams)) {
+      entry.controller?.abort()
+    }
   }
 
   const cleanupThreadState = (threadId) => {
@@ -61,16 +74,17 @@ export function useAgentThreadState({
       onBeforeCleanupThread(threadId)
     }
 
-    if (threadState.streamAbortController) {
-      threadState.streamAbortController.abort()
-    }
     if (threadState.runStreamAbortController) {
       threadState.runStreamAbortController.abort()
     }
+    abortAllRequestStreams(threadState)
     delete chatState.threadStates[threadId]
   }
 
-  const resetOnGoingConv = (threadId = null) => {
+  const resetOnGoingConv = (
+    threadId = null,
+    { preserveRunStream = false, preserveRequestStreams = false } = {}
+  ) => {
     const targetThreadId =
       threadId || (typeof getCurrentThreadId === 'function' ? getCurrentThreadId() : null)
 
@@ -82,13 +96,13 @@ export function useAgentThreadState({
         onBeforeResetThread(targetThreadId)
       }
 
-      if (threadState.streamAbortController) {
-        threadState.streamAbortController.abort()
-        threadState.streamAbortController = null
-      }
-      if (threadState.runStreamAbortController) {
+      if (!preserveRunStream && threadState.runStreamAbortController) {
         threadState.runStreamAbortController.abort()
         threadState.runStreamAbortController = null
+      }
+      if (!preserveRequestStreams && threadState.requestStreams) {
+        abortAllRequestStreams(threadState)
+        threadState.requestStreams = {}
       }
 
       threadState.onGoingConv = createOnGoingConvState()
@@ -108,3 +122,5 @@ export function useAgentThreadState({
     stopThreadStream
   }
 }
+
+export { IDLE_QUEUE_SNAPSHOT }

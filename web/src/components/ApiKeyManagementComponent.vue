@@ -5,13 +5,23 @@
       <div class="header-content">
         <div class="section-title">API Key 管理</div>
         <p class="section-description">
-          创建和管理 API Key，用于外部系统调用 Agent 对话接口。密钥仅显示一次，请妥善保管。
+          用于外部系统调用 Agent 对话接口。密钥仅显示一次，请妥善保管。
         </p>
       </div>
-      <a-button type="primary" @click="showCreateModal" class="add-btn lucide-icon-btn">
-        <Plus :size="14" />
-        创建 API Key
-      </a-button>
+      <div class="header-actions">
+        <a-button
+          @click="handleRefresh"
+          :loading="refreshing"
+          title="刷新"
+          class="refresh-btn lucide-icon-btn"
+        >
+          <template #icon><RefreshCw :size="16" :class="{ spin: refreshing }" /></template>
+        </a-button>
+        <a-button type="primary" @click="showCreateModal" class="add-btn lucide-icon-btn">
+          <Plus :size="14" />
+          创建 API Key
+        </a-button>
+      </div>
     </div>
 
     <!-- 主内容区域 -->
@@ -54,29 +64,20 @@
                   <a-switch :checked="key.is_enabled" size="small" @change="toggleEnabled(key)" />
                 </div>
                 <div class="footer-actions">
-                  <a-tooltip title="重新生成（获取完整密钥）">
-                    <a-button
-                      type="text"
-                      size="small"
-                      @click="regenerateKey(key)"
-                      class="action-btn lucide-icon-btn"
-                    >
-                      <RefreshCw :size="14" />
-                      <span>重新生成</span>
-                    </a-button>
-                  </a-tooltip>
                   <a-popconfirm
                     title="确定要删除此 API Key 吗？此操作不可恢复。"
                     @confirm="deleteKey(key)"
                     ok-text="确定"
                     cancel-text="取消"
                   >
-                    <a-tooltip title="删除">
-                      <a-button type="text" size="small" danger class="action-btn lucide-icon-btn">
-                        <Trash2 :size="14" />
-                        <span>删除</span>
-                      </a-button>
-                    </a-tooltip>
+                    <a-button
+                      size="small"
+                      danger
+                      class="action-btn delete-action-btn lucide-icon-btn"
+                    >
+                      <Trash2 :size="14" />
+                      <span>删除</span>
+                    </a-button>
                   </a-popconfirm>
                 </div>
               </div>
@@ -146,6 +147,7 @@ import { Key as KeyIcon } from 'lucide-vue-next'
 import { apikeyApi } from '@/apis/apikey_api'
 
 const loading = ref(false)
+const refreshing = ref(false)
 const error = ref(null)
 const apiKeys = ref([])
 
@@ -181,6 +183,21 @@ const loadApiKeys = async () => {
     error.value = e.message || '加载失败'
   } finally {
     loading.value = false
+  }
+}
+
+// 刷新 API Key 列表
+const handleRefresh = async () => {
+  if (refreshing.value) return
+  refreshing.value = true
+  try {
+    await loadApiKeys()
+    message.success('刷新成功')
+  } catch (e) {
+    console.error('刷新失败:', e)
+    message.error('刷新失败')
+  } finally {
+    refreshing.value = false
   }
 }
 
@@ -224,17 +241,6 @@ const copySecret = async () => {
   }
 }
 
-const regenerateKey = async (key) => {
-  try {
-    const res = await apikeyApi.regenerate(key.id)
-    createdSecret.value = res.secret
-    secretModalVisible.value = true
-    await loadApiKeys()
-  } catch (e) {
-    message.error(e.message || '重新生成失败')
-  }
-}
-
 const toggleEnabled = async (key) => {
   try {
     await apikeyApi.update(key.id, { is_enabled: !key.is_enabled })
@@ -262,6 +268,58 @@ onMounted(() => {
 
 <style lang="less" scoped>
 .apikey-management {
+  .header-section {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 16px;
+    margin-bottom: 16px;
+
+    .header-content {
+      flex: 1;
+      min-width: 0;
+
+      .section-title {
+        font-size: 16px;
+        font-weight: 500;
+        color: var(--gray-900);
+        line-height: 1.4;
+        margin: 12px 0 12px;
+      }
+
+      .section-description {
+        font-size: 14px;
+        color: var(--gray-600);
+        line-height: 1.4;
+        margin: 0;
+      }
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      .refresh-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 6px;
+        transition: all 0.2s ease;
+
+        &:hover {
+          background: var(--gray-25);
+        }
+
+        .spin {
+          animation: spin 1s linear infinite;
+        }
+      }
+    }
+  }
+
   .content-section {
     .error-message {
       margin-bottom: 16px;
@@ -390,10 +448,29 @@ onMounted(() => {
             &:hover {
               color: var(--main-600);
             }
+
+            &.delete-action-btn:hover {
+              color: var(--color-error-700);
+              background: var(--color-error-50);
+            }
+
+            &.delete-action-btn {
+              border-color: var(--color-error-100);
+              color: var(--color-error-700);
+            }
           }
         }
       }
     }
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }
 

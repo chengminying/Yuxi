@@ -6,9 +6,12 @@ import { createHighlighter } from 'shiki'
 import yaml from 'js-yaml'
 import { escapeHtml } from '@/utils/html'
 import { normalizeCodeLanguage } from '@/utils/file_preview'
+import { renderSvgBlocks } from './svgRenderer'
+import { renderHtmlPreviewBlocks } from './htmlPreviewRenderer'
 
 const markdownKatexPlugin = markdownItKatex.default || markdownItKatex
 const FRONTMATTER_MARKER = '---'
+const LEGACY_MINIO_PUBLIC_URL_RE = /https?:\/\/[^/\s)]+:9000\/public\//gi
 
 let highlighterPromise
 const getHighlighter = () => {
@@ -29,6 +32,9 @@ const normalizeHtmlTagQuotes = (content) => {
   if (!/[“”]/.test(source)) return source
   return source.replace(/<[^>]+>/g, (tag) => tag.replaceAll('“', '"').replaceAll('”', '"'))
 }
+
+export const normalizeLegacyMinioPublicUrls = (content) =>
+  String(content || '').replace(LEGACY_MINIO_PUBLIC_URL_RE, '/minio/public/')
 
 const renderFrontmatterValue = (value) => {
   if (Array.isArray(value)) {
@@ -131,6 +137,14 @@ const CODE_FENCE_LANGUAGE_RE = /(^|\n) {0,3}(```+|~~~+)[ \t]*([^\s:,`]*)/g
 const normalizeTheme = (theme) => (theme === 'github-dark' ? 'github-dark' : 'github-light')
 const hasCodeFence = (content) => CODE_FENCE_RE.test(content)
 
+const sanitizeHtmlPreviewSrcdoc = (html) =>
+  DOMPurify.sanitize(html, {
+    WHOLE_DOCUMENT: true,
+    ADD_TAGS: ['html', 'head', 'body', 'style', 'link'],
+    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'select'],
+    FORBID_ATTR: ['srcdoc', 'sandbox']
+  })
+
 const collectCodeFenceLanguages = (content) => {
   const languages = new Set()
   for (const match of String(content || '').matchAll(CODE_FENCE_LANGUAGE_RE)) {
@@ -197,20 +211,24 @@ const setCachedHtml = (cacheKey, html) => {
 
 export const renderMarkdown = async (content, { theme = 'github-light' } = {}) => {
   try {
-    const normalizedContent = normalizeHtmlTagQuotes(content)
+    const normalizedContent = normalizeHtmlTagQuotes(normalizeLegacyMinioPublicUrls(content))
+    const htmlPreviewContent = renderHtmlPreviewBlocks(normalizedContent, {
+      sanitizeHtml: sanitizeHtmlPreviewSrcdoc
+    })
+    const svgContent = renderSvgBlocks(htmlPreviewContent)
     const themeName = normalizeTheme(theme)
-    const needsHighlight = hasCodeFence(normalizedContent)
-    const cacheKey = `${needsHighlight ? themeName : 'plain'}\u0000${normalizedContent}`
+    const needsHighlight = hasCodeFence(svgContent)
+    const cacheKey = `${needsHighlight ? themeName : 'plain'}\u0000${svgContent}`
     const cachedHtml = getCachedHtml(cacheKey)
     if (cachedHtml !== undefined) return cachedHtml
 
     if (needsHighlight) {
       const highlighter = await getHighlighter()
-      await ensureLanguages(highlighter, collectCodeFenceLanguages(normalizedContent))
+      await ensureLanguages(highlighter, collectCodeFenceLanguages(svgContent))
     }
 
     const md = await getRenderer(themeName, needsHighlight)
-    const html = DOMPurify.sanitize(md.render(normalizedContent), {
+    const html = DOMPurify.sanitize(md.render(svgContent), {
       ADD_TAGS: ['input'],
       ADD_ATTR: [
         'class',

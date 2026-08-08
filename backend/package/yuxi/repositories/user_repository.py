@@ -5,12 +5,15 @@ from datetime import datetime as dt
 from typing import Annotated, Any
 
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.storage.postgres.manager import pg_manager
-from yuxi.storage.postgres.models_business import User
+from yuxi.storage.postgres.models_business import APIKey, User
 
-# 使用 naive datetime 以兼容 PostgreSQL TIMESTAMP WITHOUT TIME ZONE 列
-_utc_now = dt.now(UTC).replace(tzinfo=None)
+
+def _utc_now() -> dt:
+    # 使用 naive datetime 以匹配 PostgreSQL TIMESTAMP WITHOUT TIME ZONE 列
+    return dt.now(UTC).replace(tzinfo=None)
 
 
 class UserRepository:
@@ -19,14 +22,32 @@ class UserRepository:
     async def get_by_id(self, id: int) -> User | None:
         """根据 ID 获取用户"""
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(User).where(User.id == id))
-            return result.scalar_one_or_none()
+            return await self.get_by_id_with_db(session, id)
 
-    async def get_by_user_id(self, user_id: str) -> User | None:
-        """根据 user_id 获取用户"""
+    async def get_by_id_with_db(self, db: AsyncSession, id: int) -> User | None:
+        """使用指定的 db 根据 ID 获取用户"""
+        result = await db.execute(select(User).where(User.id == id))
+        return result.scalar_one_or_none()
+
+    async def get_by_uid(self, uid: str) -> User | None:
+        """根据 uid 获取用户"""
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(User).where(User.user_id == user_id))
-            return result.scalar_one_or_none()
+            return await self.get_by_uid_with_db(session, uid)
+
+    async def get_by_uid_with_db(self, db: AsyncSession, uid: str) -> User | None:
+        """使用指定的 db 获取用户"""
+        result = await db.execute(select(User).where(User.uid == uid))
+        return result.scalar_one_or_none()
+
+    async def list_by_uids(self, uids: list[str]) -> list[User]:
+        """批量获取指定 uid 的用户。"""
+        normalized_uids = sorted({str(uid).strip() for uid in uids if str(uid).strip()})
+        if not normalized_uids:
+            return []
+
+        async with pg_manager.get_async_session_context() as session:
+            result = await session.execute(select(User).where(User.uid.in_(normalized_uids)))
+            return list(result.scalars().all())
 
     async def get_by_phone(self, phone: str) -> User | None:
         """根据手机号获取用户"""
@@ -102,16 +123,19 @@ class UserRepository:
             if username:
                 import hashlib
 
-                hash_suffix = hashlib.sha256(user.user_id.encode()).hexdigest()[:4]
+                hash_suffix = hashlib.sha256(user.uid.encode()).hexdigest()[:4]
                 user.username = f"已注销用户-{hash_suffix}"
             if phone_number:
                 user.phone_number = None
+            api_key_result = await session.execute(select(APIKey).where(APIKey.user_id == user.id))
+            for api_key in api_key_result.scalars().all():
+                api_key.is_enabled = False
         return True
 
-    async def exists_by_user_id(self, user_id: str) -> bool:
-        """检查 user_id 是否存在"""
+    async def exists_by_uid(self, uid: str) -> bool:
+        """检查 uid 是否存在"""
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(User.id).where(User.user_id == user_id))
+            result = await session.execute(select(User.id).where(User.uid == uid))
             return result.scalar_one_or_none() is not None
 
     async def exists_by_phone(self, phone: str) -> bool:
@@ -129,10 +153,10 @@ class UserRepository:
             result = await session.execute(query)
             return result.scalar() or 0
 
-    async def get_all_user_ids(self) -> list[str]:
-        """获取所有用户 ID"""
+    async def get_all_uids(self) -> list[str]:
+        """获取所有 uid"""
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(User.user_id))
+            result = await session.execute(select(User.uid))
             return [uid for (uid,) in result.all()]
 
     async def get_admin_count_in_department(self, department_id: int, exclude_user_id: int | None = None) -> int:

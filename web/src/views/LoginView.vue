@@ -48,24 +48,24 @@
               <div v-if="isFirstRun" class="login-form login-form--init">
                 <a-form :model="adminForm" @finish="handleInitialize" layout="vertical">
                   <a-form-item
-                    label="用户ID"
-                    name="user_id"
+                    label="UID"
+                    name="uid"
                     :rules="[
-                      { required: true, message: '请输入用户ID' },
+                      { required: true, message: '请输入UID' },
                       {
                         pattern: /^[a-zA-Z0-9_]+$/,
-                        message: '用户ID只能包含字母、数字和下划线'
+                        message: 'UID只能包含字母、数字和下划线'
                       },
                       {
                         min: 3,
                         max: 20,
-                        message: '用户ID长度必须在3-20个字符之间'
+                        message: 'UID长度必须在3-20个字符之间'
                       }
                     ]"
                   >
                     <a-input
-                      v-model:value="adminForm.user_id"
-                      placeholder="请输入用户ID（3-20个字符）"
+                      v-model:value="adminForm.uid"
+                      placeholder="请输入UID（3-20个字符）"
                       :maxlength="20"
                     />
                   </a-form-item>
@@ -97,9 +97,19 @@
                   <a-form-item
                     label="密码"
                     name="password"
-                    :rules="[{ required: true, message: '请输入密码' }]"
+                    :rules="[
+                      { required: true, message: '请输入密码' },
+                      {
+                        min: MIN_PASSWORD_LENGTH,
+                        message: `密码至少需要 ${MIN_PASSWORD_LENGTH} 个字符`
+                      }
+                    ]"
                   >
-                    <a-input-password v-model:value="adminForm.password" prefix-icon="lock" />
+                    <a-input-password
+                      v-model:value="adminForm.password"
+                      prefix-icon="lock"
+                      :minlength="MIN_PASSWORD_LENGTH"
+                    />
                   </a-form-item>
 
                   <a-form-item
@@ -154,9 +164,9 @@
                   <a-form-item
                     label="登录账号"
                     name="loginId"
-                    :rules="[{ required: true, message: '请输入用户ID或手机号' }]"
+                    :rules="[{ required: true, message: '请输入UID或手机号' }]"
                   >
-                    <a-input v-model:value="loginForm.loginId" placeholder="用户ID或手机号">
+                    <a-input v-model:value="loginForm.loginId" placeholder="UID或手机号">
                       <template #prefix>
                         <img :src="userIconUrl" alt="" class="input-icon" />
                       </template>
@@ -282,6 +292,8 @@ import {
   Key as KeyIcon,
   AlertCircle as ExclamationCircleIcon
 } from 'lucide-vue-next'
+import { tryAutoStartOIDC, sanitizeRedirect } from '@/utils/oidcAutoStart'
+import { MIN_PASSWORD_LENGTH } from '@/utils/passwordValidation'
 
 const router = useRouter()
 const route = useRoute()
@@ -366,13 +378,13 @@ const lockCountdown = ref(null)
 
 // 登录表单
 const loginForm = reactive({
-  loginId: '', // 支持user_id或phone_number登录
+  loginId: '', // 支持uid或phone_number登录
   password: ''
 })
 
 // 管理员初始化表单
 const adminForm = reactive({
-  user_id: '', // 改为直接输入user_id
+  uid: '', // 改为直接输入uid
   password: '',
   confirmPassword: '',
   phone_number: '' // 手机号字段（可选）
@@ -563,9 +575,11 @@ const checkOIDCConfig = async () => {
     if (config.provider_name) {
       oidcButtonText.value = config.provider_name
     }
+    return config
   } catch (error) {
     console.error('检查 OIDC 配置失败:', error)
     oidcEnabled.value = false
+    return null
   } finally {
     oidcChecking.value = false
   }
@@ -587,7 +601,7 @@ const handleInitialize = async () => {
     }
 
     await userStore.initialize({
-      user_id: adminForm.user_id,
+      uid: adminForm.uid,
       password: adminForm.password,
       phone_number: adminForm.phone_number || null // 空字符串转为null
     })
@@ -638,9 +652,9 @@ const checkServerHealth = async () => {
 
 // 组件挂载时
 onMounted(async () => {
-  // 如果已登录，跳转到首页
+  // 如果已登录，按 redirect 参数跳转（不固定跳首页）
   if (userStore.isLoggedIn) {
-    router.push('/')
+    router.push(sanitizeRedirect(route.query.redirect))
     return
   }
 
@@ -657,8 +671,18 @@ onMounted(async () => {
   // 检查是否是首次运行
   await checkFirstRunStatus()
 
-  // 检查 OIDC 配置
-  checkOIDCConfig()
+  // 如果处于首次运行状态，不需要 OIDC 自动登录
+  if (isFirstRun.value) {
+    return
+  }
+
+  // 检查 OIDC 配置完成后，尝试自动触发 OIDC 登录（跨系统跳转场景）
+  const config = await checkOIDCConfig()
+  if (config && config.enabled) {
+    const autoStarted = await tryAutoStartOIDC(async () => await authApi.getOIDCLoginUrl(), config)
+    // 如果已发起 OIDC 跳转，页面会被重定向，不需要继续
+    if (autoStarted) return
+  }
 })
 
 // 组件卸载时清理定时器

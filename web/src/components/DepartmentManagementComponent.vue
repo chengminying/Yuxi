@@ -6,10 +6,22 @@
         <div class="section-title">部门管理</div>
         <p class="section-description">管理系统部门，部门下的用户会被隔离管理。</p>
       </div>
-      <a-button type="primary" @click="showAddDepartmentModal" class="add-btn lucide-icon-btn">
-        <template #icon><Plus :size="16" /></template>
-        添加部门
-      </a-button>
+      <div class="header-actions">
+        <a-button
+          @click="handleRefresh"
+          :loading="departmentManagement.refreshing"
+          title="刷新"
+          class="refresh-btn lucide-icon-btn"
+        >
+          <template #icon
+            ><RefreshCw :size="16" :class="{ spin: departmentManagement.refreshing }"
+          /></template>
+        </a-button>
+        <a-button type="primary" @click="showAddDepartmentModal" class="add-btn lucide-icon-btn">
+          <template #icon><Plus :size="16" /></template>
+          添加部门
+        </a-button>
+      </div>
     </div>
 
     <!-- 主内容区域 -->
@@ -48,7 +60,7 @@
                       @click="showEditDepartmentModal(record)"
                       class="action-btn lucide-icon-btn"
                     >
-                      <Pencil :size="14" />
+                      <SquarePen :size="14" />
                     </a-button>
                   </a-tooltip>
                   <a-tooltip title="删除部门">
@@ -86,7 +98,7 @@
       width="520px"
       class="department-modal"
     >
-      <a-form layout="vertical" class="department-form">
+      <a-form layout="vertical" class="department-form" autocomplete="off">
         <a-form-item label="部门名称" required class="form-item">
           <a-input
             v-model:value="departmentManagement.form.name"
@@ -109,34 +121,35 @@
         <a-divider v-if="!departmentManagement.editMode" />
 
         <template v-if="!departmentManagement.editMode">
-          <div class="admin-section-title">
-            <Users :size="16" />
-            <span>部门管理员</span>
-          </div>
           <p class="admin-section-hint">
             创建部门时必须同时创建管理员，该管理员将负责管理本部门用户
           </p>
 
-          <a-form-item label="管理员用户ID" required class="form-item">
+          <a-form-item label="管理员UID" required class="form-item">
             <a-input
-              v-model:value="departmentManagement.form.adminUserId"
-              placeholder="请输入管理员用户ID（3-20位字母/数字/下划线）"
+              v-model:value="departmentManagement.form.adminUid"
+              placeholder="请输入管理员UID（3-20位字母/数字/下划线）"
               size="large"
               :maxlength="20"
-              @blur="checkAdminUserId"
+              name="new-department-admin-uid"
+              autocomplete="off"
+              @blur="checkAdminUid"
             />
-            <div v-if="departmentManagement.form.userIdError" class="error-text">
-              {{ departmentManagement.form.userIdError }}
+            <div v-if="departmentManagement.form.uidError" class="error-text">
+              {{ departmentManagement.form.uidError }}
             </div>
-            <div v-else class="help-text">此ID将用于登录</div>
+            <div v-else class="help-text">此 UID 将用于登录</div>
           </a-form-item>
 
           <a-form-item label="密码" required class="form-item">
             <a-input-password
               v-model:value="departmentManagement.form.adminPassword"
-              placeholder="请输入管理员密码"
+              :placeholder="`请输入管理员密码（至少 ${MIN_PASSWORD_LENGTH} 位）`"
               size="large"
+              :minlength="MIN_PASSWORD_LENGTH"
               :maxlength="50"
+              name="new-department-admin-password"
+              autocomplete="new-password"
             />
           </a-form-item>
 
@@ -146,6 +159,8 @@
               placeholder="请再次输入密码"
               size="large"
               :maxlength="50"
+              name="new-department-admin-password-confirmation"
+              autocomplete="new-password"
             />
           </a-form-item>
 
@@ -155,6 +170,8 @@
               placeholder="请输入手机号（可用于登录）"
               size="large"
               :maxlength="11"
+              name="new-department-admin-phone"
+              autocomplete="off"
             />
             <div v-if="departmentManagement.form.phoneError" class="error-text">
               {{ departmentManagement.form.phoneError }}
@@ -168,9 +185,10 @@
 
 <script setup>
 import { reactive, onMounted, watch } from 'vue'
-import { notification, Modal } from 'ant-design-vue'
+import { notification, message, Modal } from 'ant-design-vue'
 import { departmentApi, apiSuperAdminGet } from '@/apis'
-import { Delete as Trash2, Edit3 as Pencil, Plus, Users } from 'lucide-vue-next'
+import { Plus, RefreshCw, SquarePen, Trash2 } from 'lucide-vue-next'
+import { isPasswordLongEnough, MIN_PASSWORD_LENGTH } from '@/utils/passwordValidation'
 
 // 表格列定义
 const columns = [
@@ -204,6 +222,7 @@ const columns = [
 // 部门管理状态
 const departmentManagement = reactive({
   loading: false,
+  refreshing: false,
   departments: [],
   error: null,
   modalVisible: false,
@@ -213,11 +232,11 @@ const departmentManagement = reactive({
   form: {
     name: '',
     description: '',
-    adminUserId: '',
+    adminUid: '',
     adminPassword: '',
     adminConfirmPassword: '',
     adminPhone: '',
-    userIdError: '',
+    uidError: '',
     phoneError: ''
   }
 })
@@ -237,6 +256,21 @@ const fetchDepartments = async () => {
   }
 }
 
+// 刷新部门列表
+const handleRefresh = async () => {
+  if (departmentManagement.refreshing) return
+  departmentManagement.refreshing = true
+  try {
+    await fetchDepartments()
+    message.success('刷新成功')
+  } catch (error) {
+    console.error('刷新失败:', error)
+    message.error('刷新失败')
+  } finally {
+    departmentManagement.refreshing = false
+  }
+}
+
 // 打开添加部门模态框
 const showAddDepartmentModal = () => {
   departmentManagement.modalTitle = '添加部门'
@@ -245,11 +279,11 @@ const showAddDepartmentModal = () => {
   departmentManagement.form = {
     name: '',
     description: '',
-    adminUserId: '',
+    adminUid: '',
     adminPassword: '',
     adminConfirmPassword: '',
     adminPhone: '',
-    userIdError: '',
+    uidError: '',
     phoneError: ''
   }
   departmentManagement.modalVisible = true
@@ -263,11 +297,11 @@ const showEditDepartmentModal = (department) => {
   departmentManagement.form = {
     name: department.name,
     description: department.description || '',
-    adminUserId: '',
+    adminUid: '',
     adminPassword: '',
     adminConfirmPassword: '',
     adminPhone: '',
-    userIdError: '',
+    uidError: '',
     phoneError: ''
   }
   departmentManagement.modalVisible = true
@@ -293,34 +327,34 @@ watch(
   }
 )
 
-// 检查管理员用户ID是否可用
-const checkAdminUserId = async () => {
-  const userId = departmentManagement.form.adminUserId.trim()
-  departmentManagement.form.userIdError = ''
+// 检查管理员UID是否可用
+const checkAdminUid = async () => {
+  const uid = departmentManagement.form.adminUid.trim()
+  departmentManagement.form.uidError = ''
 
-  if (!userId) {
+  if (!uid) {
     return
   }
 
   // 验证格式
-  if (!/^[a-zA-Z0-9_]+$/.test(userId)) {
-    departmentManagement.form.userIdError = '用户ID只能包含字母、数字和下划线'
+  if (!/^[a-zA-Z0-9_]+$/.test(uid)) {
+    departmentManagement.form.uidError = 'UID只能包含字母、数字和下划线'
     return
   }
 
-  if (userId.length < 3 || userId.length > 20) {
-    departmentManagement.form.userIdError = '用户ID长度必须在3-20个字符之间'
+  if (uid.length < 3 || uid.length > 20) {
+    departmentManagement.form.uidError = 'UID长度必须在3-20个字符之间'
     return
   }
 
   // 检查是否已存在
   try {
-    const result = await apiSuperAdminGet(`/api/auth/check-user-id/${userId}`)
+    const result = await apiSuperAdminGet(`/api/auth/check-uid/${uid}`)
     if (!result.is_available) {
-      departmentManagement.form.userIdError = '该用户ID已被使用'
+      departmentManagement.form.uidError = '该UID已被使用'
     }
   } catch (error) {
-    console.error('检查用户ID失败:', error)
+    console.error('检查UID失败:', error)
   }
 }
 
@@ -338,31 +372,36 @@ const handleDepartmentFormSubmit = async () => {
       return
     }
 
-    // 验证管理员用户ID
-    const adminUserId = departmentManagement.form.adminUserId.trim()
-    if (!adminUserId) {
-      notification.error({ message: '请输入管理员用户ID' })
+    // 验证管理员UID
+    const adminUid = departmentManagement.form.adminUid.trim()
+    if (!adminUid) {
+      notification.error({ message: '请输入管理员UID' })
       return
     }
 
-    if (!/^[a-zA-Z0-9_]+$/.test(adminUserId)) {
-      notification.error({ message: '用户ID只能包含字母、数字和下划线' })
+    if (!/^[a-zA-Z0-9_]+$/.test(adminUid)) {
+      notification.error({ message: 'UID只能包含字母、数字和下划线' })
       return
     }
 
-    if (adminUserId.length < 3 || adminUserId.length > 20) {
-      notification.error({ message: '用户ID长度必须在3-20个字符之间' })
+    if (adminUid.length < 3 || adminUid.length > 20) {
+      notification.error({ message: 'UID长度必须在3-20个字符之间' })
       return
     }
 
-    if (departmentManagement.form.userIdError) {
-      notification.error({ message: '管理员用户ID已存在或格式错误' })
+    if (departmentManagement.form.uidError) {
+      notification.error({ message: '管理员UID已存在或格式错误' })
       return
     }
 
     // 验证密码
     if (!departmentManagement.form.adminPassword) {
       notification.error({ message: '请输入管理员密码' })
+      return
+    }
+
+    if (!isPasswordLongEnough(departmentManagement.form.adminPassword)) {
+      notification.error({ message: `密码至少需要 ${MIN_PASSWORD_LENGTH} 个字符` })
       return
     }
 
@@ -396,12 +435,12 @@ const handleDepartmentFormSubmit = async () => {
       await departmentApi.createDepartment({
         name: departmentManagement.form.name.trim(),
         description: departmentManagement.form.description.trim() || undefined,
-        admin_user_id: adminUserId,
+        admin_uid: adminUid,
         admin_password: departmentManagement.form.adminPassword,
         admin_phone: departmentManagement.form.adminPhone || undefined
       })
 
-      notification.success({ message: `部门创建成功，管理员 "${adminUserId}" 已创建` })
+      message.success(`部门创建成功，管理员 "${adminUid}" 已创建`)
     }
 
     // 重新获取部门列表
@@ -454,6 +493,58 @@ onMounted(() => {
 
 <style lang="less" scoped>
 .department-management {
+  .header-section {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 16px;
+    margin-bottom: 16px;
+
+    .header-content {
+      flex: 1;
+      min-width: 0;
+
+      .section-title {
+        font-size: 16px;
+        font-weight: 500;
+        color: var(--gray-900);
+        line-height: 1.4;
+        margin: 12px 0 12px;
+      }
+
+      .section-description {
+        font-size: 14px;
+        color: var(--gray-600);
+        line-height: 1.4;
+        margin: 0;
+      }
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      .refresh-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 6px;
+        transition: all 0.2s ease;
+
+        &:hover {
+          background: var(--gray-25);
+        }
+
+        .spin {
+          animation: spin 1s linear infinite;
+        }
+      }
+    }
+  }
+
   .content-section {
     overflow: hidden;
 
@@ -498,6 +589,15 @@ onMounted(() => {
         }
       }
     }
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }
 

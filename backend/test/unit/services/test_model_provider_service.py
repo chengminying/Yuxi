@@ -1,15 +1,18 @@
 import os
+from types import SimpleNamespace
 
 import pytest
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
-from yuxi.config.builtin_providers import BUILTIN_PROVIDERS
-from yuxi.services.model_provider_service import (
-    check_credential_status,
+from yuxi.models.providers.builtin import BUILTIN_PROVIDERS
+from yuxi.models.providers.service import (
     _normalize_payload,
     _normalize_remote_model,
+    _validate_request_body_overrides_scope,
+    check_credential_status,
     fetch_remote_models,
+    update_provider_config,
 )
 
 
@@ -28,6 +31,119 @@ def test_normalize_payload_accepts_enabled_chat_model():
     assert "models_endpoint" not in payload
     assert "embedding_models_endpoint" not in payload
     assert payload["enabled_models"][0]["display_name"] == "anthropic/claude-sonnet-4.5"
+
+
+def test_normalize_payload_accepts_allowed_model_request_body_overrides():
+    overrides = {
+        "enable_thinking": True,
+        "thinking_budget": 1024,
+        "thinking": {"type": "enabled"},
+        "reasoning": {"future_provider_option": {"enabled": True}},
+        "reasoning_effort": "high",
+    }
+    payload = _normalize_payload(
+        {
+            "provider_id": "siliconflow-local",
+            "display_name": "SiliconFlow Local",
+            "base_url": "https://api.siliconflow.cn/v1",
+            "enabled_models": [
+                {
+                    "id": "Qwen/Qwen3-8B",
+                    "type": "chat",
+                    "request_body_overrides": overrides,
+                }
+            ],
+        }
+    )
+
+    assert payload["enabled_models"][0]["request_body_overrides"] == overrides
+
+
+@pytest.mark.parametrize(
+    ("value", "error"),
+    [
+        (["enable_thinking"], "必须是 JSON 对象"),
+        ({"messages": []}, "包含不支持的 extra_body 字段"),
+        ({"thinking_budget": float("nan")}, "只能包含合法 JSON 值"),
+    ],
+)
+def test_normalize_request_body_overrides_rejects_invalid_values(value, error):
+    data = {
+        "provider_id": "siliconflow-local",
+        "display_name": "SiliconFlow Local",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "enabled_models": [
+            {
+                "id": "Qwen/Qwen3-8B",
+                "type": "chat",
+                "request_body_overrides": value,
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match=error):
+        _normalize_payload(data)
+
+
+@pytest.mark.parametrize(
+    ("provider_type", "model_type", "error"),
+    [
+        ("anthropic", "chat", "仅支持 OpenAI 兼容供应商"),
+        ("openai", "rerank", "仅支持 chat 模型"),
+    ],
+)
+def test_request_body_overrides_require_openai_chat_model(provider_type, model_type, error):
+    model = {
+        "id": "model",
+        "type": model_type,
+        "request_body_overrides": {"thinking_budget": 1024},
+    }
+    with pytest.raises(ValueError, match=error):
+        _validate_request_body_overrides_scope([model], provider_type)
+
+
+@pytest.mark.asyncio
+async def test_update_provider_config_rejects_provider_type_change_with_existing_overrides(monkeypatch):
+    provider = SimpleNamespace(
+        provider_id="openai-local",
+        provider_type="openai",
+        capabilities=["chat"],
+        enabled_models=[
+            {
+                "id": "chat-model",
+                "type": "chat",
+                "request_body_overrides": {"enable_thinking": False},
+            }
+        ],
+    )
+
+    async def fake_get_model_provider(db, provider_id):
+        del db
+        return provider if provider_id == "openai-local" else None
+
+    async def fail_update_model_provider(db, provider, data):
+        pytest.fail("不应在非法 request_body_overrides 范围下写入 provider")
+
+    monkeypatch.setattr("yuxi.models.providers.service.get_model_provider", fake_get_model_provider)
+    monkeypatch.setattr("yuxi.models.providers.service.update_model_provider", fail_update_model_provider)
+
+    with pytest.raises(ValueError, match="仅支持 OpenAI 兼容供应商"):
+        await update_provider_config(None, "openai-local", {"provider_type": "anthropic"}, "tester")
+
+
+def test_normalize_payload_accepts_anthropic_provider_type():
+    payload = _normalize_payload(
+        {
+            "provider_id": "xiaomi-token-plan",
+            "display_name": "Xiaomi Token Plan",
+            "provider_type": "anthropic",
+            "base_url": "https://token-plan-cn.xiaomimimo.com/anthropic",
+            "capabilities": ["chat"],
+            "enabled_models": [{"id": "mimo-v2.5-pro", "type": "chat", "source": "manual"}],
+        }
+    )
+
+    assert payload["provider_type"] == "anthropic"
+    assert payload["enabled_models"][0]["id"] == "mimo-v2.5-pro"
 
 
 def test_normalize_payload_rejects_unknown_enabled_model_type():
@@ -96,7 +212,7 @@ async def test_fetch_remote_models_loads_embedding_only_when_capability_enabled(
         calls.append((endpoint, model_type))
         return [{"id": f"{model_type}-model", "type": model_type}]
 
-    monkeypatch.setattr("yuxi.services.model_provider_service._fetch_models_from_endpoint", fake_fetch)
+    monkeypatch.setattr("yuxi.models.providers.service._fetch_models_from_endpoint", fake_fetch)
 
     class Provider:
         base_url = "https://example.com/v1"
@@ -114,6 +230,18 @@ async def test_fetch_remote_models_loads_embedding_only_when_capability_enabled(
     assert [model["type"] for model in models] == ["chat", "embedding"]
 
 
+def test_normalize_payload_rejects_ollama_provider_type():
+    with pytest.raises(ValueError, match="provider_type 必须是"):
+        _normalize_payload(
+            {
+                "provider_id": "ollama-local",
+                "display_name": "Ollama Local",
+                "provider_type": "ollama",
+                "base_url": "http://localhost:11434",
+            }
+        )
+
+
 def test_builtin_provider_templates_default_to_openai_provider_type():
     assert len(BUILTIN_PROVIDERS) >= 16
     provider_types = {
@@ -128,6 +256,7 @@ def test_builtin_provider_templates_default_to_openai_provider_type():
         for provider in BUILTIN_PROVIDERS
     }
     assert provider_types == {"openai"}
+    assert all("ollama" not in provider["provider_id"] for provider in BUILTIN_PROVIDERS)
 
 
 def test_builtin_siliconflow_provider_includes_default_runnable_models():
@@ -144,8 +273,33 @@ def test_builtin_siliconflow_provider_includes_default_runnable_models():
     assert "base_url_override" not in models["Pro/BAAI/bge-reranker-v2-m3"]
 
 
+def test_builtin_dashscope_cn_provider_includes_default_embedding_and_rerank_models():
+    provider = next(item for item in BUILTIN_PROVIDERS if item["provider_id"] == "alibaba-cn")
+    models = {model["id"]: model for model in provider["enabled_models"]}
+
+    assert provider["capabilities"] == ["chat", "embedding", "rerank"]
+    assert provider["embedding_base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
+    assert provider["rerank_base_url"] == "https://dashscope.aliyuncs.com/compatible-api/v1/reranks"
+    assert "embedding_models_endpoint" not in provider
+    assert "rerank_models_endpoint" not in provider
+    assert models["text-embedding-v4"]["type"] == "embedding"
+    assert models["text-embedding-v4"]["dimension"] == 1024
+    assert models["qwen3-rerank"]["type"] == "rerank"
+
+
+def test_builtin_dashscope_international_provider_uses_international_endpoint():
+    provider = next(item for item in BUILTIN_PROVIDERS if item["provider_id"] == "alibaba")
+
+    assert provider["display_name"] == "DashScope (International)"
+    assert provider["base_url"] == "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    assert provider["models_endpoint"] == "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models"
+    assert "embedding_base_url" not in provider
+    assert "rerank_base_url" not in provider
+
+
 def testcheck_credential_status_disabled_provider_always_ok():
     """未启用的 provider 无论凭证如何配置，状态始终为 ok。"""
+
     class Provider:
         is_enabled = False
         api_key = None
@@ -156,6 +310,7 @@ def testcheck_credential_status_disabled_provider_always_ok():
 
 def testcheck_credential_status_direct_api_key_ok():
     """直接配置了 api_key 的启用 provider 状态为 ok。"""
+
     class Provider:
         is_enabled = True
         api_key = "sk-test"
@@ -190,6 +345,7 @@ def testcheck_credential_status_env_key_missing_warning(monkeypatch):
 
 def testcheck_credential_status_both_empty_warning():
     """api_key 和 api_key_env 都未配置时状态为 warning。"""
+
     class Provider:
         is_enabled = True
         api_key = None
@@ -223,9 +379,7 @@ def test_normalize_payload_accepts_manual_source():
             "display_name": "Custom Local",
             "base_url": "https://example.com/v1",
             "capabilities": ["chat"],
-            "enabled_models": [
-                {"id": "my-chat-model", "type": "chat", "source": "manual"}
-            ],
+            "enabled_models": [{"id": "my-chat-model", "type": "chat", "source": "manual"}],
         }
     )
 
@@ -240,9 +394,7 @@ def test_normalize_payload_rejects_invalid_source():
                 "provider_id": "custom-local",
                 "display_name": "Custom Local",
                 "base_url": "https://example.com/v1",
-                "enabled_models": [
-                    {"id": "x", "type": "chat", "source": "custom"}
-                ],
+                "enabled_models": [{"id": "x", "type": "chat", "source": "custom"}],
             }
         )
 
@@ -256,9 +408,7 @@ def test_normalize_payload_rejects_model_type_not_in_capabilities():
                 "display_name": "Chat Only",
                 "base_url": "https://example.com/v1",
                 "capabilities": ["chat"],
-                "enabled_models": [
-                    {"id": "rogue-embedding", "type": "embedding", "dimension": 1024}
-                ],
+                "enabled_models": [{"id": "rogue-embedding", "type": "embedding", "dimension": 1024}],
             }
         )
 

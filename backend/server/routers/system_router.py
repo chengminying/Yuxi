@@ -1,14 +1,16 @@
 import os
-import aiofiles
 from pathlib import Path
 
+import aiofiles
 import yaml
 from fastapi import APIRouter, Body, Depends, HTTPException
-
-from yuxi.storage.postgres.models_business import User
-from server.utils.auth_middleware import get_admin_user
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi import config, get_version
+from yuxi.storage.postgres.models_business import User
 from yuxi.utils.logging_config import logger
+
+from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
 
 system = APIRouter(prefix="/system", tags=["system"])
 
@@ -23,13 +25,43 @@ async def health_check():
     return {"status": "ok", "message": "服务正常运行", "version": get_version()}
 
 
+@system.get("/discovery")
+async def discovery():
+    """系统能力发现接口（公开接口）"""
+    return {
+        "name": "Yuxi",
+        "version": get_version(),
+        "api_prefix": "/api",
+        "capabilities": {
+            "cli": {
+                "min_cli_version": "0.1.0",
+                "browser_login": True,
+                "api_key_auth": True,
+                "remote_config": True,
+                "kb_upload": True,
+                "kb_list": True,
+                "kb_files": True,
+                "kb_query": True,
+                "kb_open": True,
+                "kb_find": True,
+            }
+        },
+        "endpoints": {
+            "health": "/api/system/health",
+            "auth_me": "/api/auth/me",
+            "cli_auth_sessions": "/api/auth/cli/sessions",
+            "cli_auth_authorize": "/auth/cli/authorize",
+        },
+    }
+
+
 # =============================================================================
 # === 配置管理分组 ===
 # =============================================================================
 
 
 @system.get("/config")
-async def get_config(current_user: User = Depends(get_admin_user)):
+async def get_config(current_user: User = Depends(get_required_user)):
     """获取系统配置"""
     return config.dump_config()
 
@@ -37,7 +69,14 @@ async def get_config(current_user: User = Depends(get_admin_user)):
 @system.post("/config")
 async def update_config_single(key=Body(...), value=Body(...), current_user: User = Depends(get_admin_user)) -> dict:
     """更新单个配置项"""
-    config[key] = value
+    if not isinstance(key, str) or key not in type(config).model_fields:
+        raise HTTPException(status_code=400, detail=f"未知配置项: {key}")
+    if not config.can_update(key):
+        raise HTTPException(status_code=400, detail=f"配置项不可修改: {key}")
+    try:
+        config.set_value(key, value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     config.save()
     return config.dump_config()
 
@@ -45,7 +84,10 @@ async def update_config_single(key=Body(...), value=Body(...), current_user: Use
 @system.post("/config/update")
 async def update_config_batch(items: dict = Body(...), current_user: User = Depends(get_admin_user)) -> dict:
     """批量更新配置项"""
-    config.update(items)
+    try:
+        config.update(items)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     config.save()
     return config.dump_config()
 
@@ -66,7 +108,7 @@ async def get_system_logs(levels: str | None = None, current_user: User = Depend
             level_filter = set(level.strip().upper() for level in levels.split(",") if level.strip())
 
         #  修复 GBK 编码报错：强制 utf-8 读取，忽略错误
-        async with aiofiles.open(LOG_FILE, mode='r', encoding='utf-8', errors='ignore') as f:
+        async with aiofiles.open(LOG_FILE, encoding="utf-8", errors="ignore") as f:
             # 读取最后1000行
             lines = []
             async for line in f:
@@ -91,6 +133,7 @@ async def get_system_logs(levels: str | None = None, current_user: User = Depend
     except Exception as e:
         logger.error(f"获取系统日志失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取系统日志失败: {str(e)}")
+
 
 # =============================================================================
 # === 信息管理分组 ===
@@ -148,65 +191,70 @@ async def reload_info_config(current_user: User = Depends(get_admin_user)):
 
 
 # =============================================================================
-# === OCR服务分组 ===
+# === 通用配置项与 OCR 分组 ===
 # =============================================================================
+
+
+class ConfigOptionValuePayload(BaseModel):
+    """管理员可更新的通用配置值。"""
+
+    value: dict
+
+
+@system.get("/config/options")
+async def get_config_options(
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """返回系统定义的通用配置表单和值。"""
+
+    from yuxi.config.options import list_options, serialize_option
+
+    return {"options": [serialize_option(record) for record in await list_options(db)]}
+
+
+@system.put("/config/options/{key}")
+async def put_config_option(
+    key: str,
+    payload: ConfigOptionValuePayload,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """保存一个通用配置项的 JSON 值。"""
+
+    from yuxi.config.options import serialize_option, update_option_value
+
+    try:
+        record = await update_option_value(db, key, payload.value, current_user.username)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"配置项不存在: {key}")
+        await db.commit()
+        await db.refresh(record)
+        return {"option": serialize_option(record)}
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@system.get("/ocr/options")
+async def get_ocr_engine_options(
+    current_user: User = Depends(get_required_user),
+):
+    """返回所有代码支持的 OCR 方法和默认项。"""
+
+    from yuxi.services.ocr_service import get_ocr_options
+
+    return get_ocr_options()
 
 
 @system.get("/ocr/health")
-async def check_ocr_services_health(current_user: User = Depends(get_admin_user)):
-    """
-    检查所有OCR服务的健康状态
-    返回各个OCR服务的可用性信息
-    """
-    from yuxi.plugins.parser.factory import DocumentProcessorFactory
+async def get_ocr_health(
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """供登录用户使用当前有效配置检查全部 OCR 方法。"""
 
-    try:
-        # 使用统一的健康检查接口
-        health_status = await DocumentProcessorFactory.check_all_health_async()
+    from yuxi.services.ocr_service import check_all_ocr_health
 
-        # 转换为旧格式以保持API兼容性
-        formatted_status = {}
-        for service_name, health_info in health_status.items():
-            formatted_status[service_name] = {
-                "status": health_info.get("status", "unknown"),
-                "message": health_info.get("message", ""),
-                "details": health_info.get("details", {}),
-            }
-
-        # 计算整体健康状态
-        overall_status = (
-            "healthy" if any(svc["status"] == "healthy" for svc in formatted_status.values()) else "unhealthy"
-        )
-
-        return {
-            "overall_status": overall_status,
-            "services": formatted_status,
-            "message": "OCR服务健康检查完成",
-        }
-
-    except Exception as e:
-        logger.error(f"OCR健康检查失败: {str(e)}")
-        return {
-            "overall_status": "error",
-            "services": {},
-            "message": f"OCR健康检查失败: {str(e)}",
-        }
-
-
-# =============================================================================
-# === 自定义供应商管理分组 ===
-# =============================================================================
-
-
-@system.get("/custom-providers")
-async def get_custom_providers(current_user: User = Depends(get_admin_user)):
-    """获取所有自定义供应商"""
-    try:
-        custom_providers = config.get_custom_providers()
-        return {
-            "providers": {provider: info.model_dump() for provider, info in custom_providers.items()},
-            "message": "success",
-        }
-    except Exception as e:
-        logger.error(f"获取自定义供应商失败: {e}")
-        raise HTTPException(status_code=500, detail=f"获取自定义供应商失败: {str(e)}")
+    return {"health": await check_all_ocr_health(db)}

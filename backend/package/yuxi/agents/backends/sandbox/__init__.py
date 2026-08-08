@@ -7,7 +7,7 @@ from .paths import (
     sandbox_outputs_dir,
     sandbox_uploads_dir,
     sandbox_user_data_dir,
-    sandbox_workspace_agents_prompt_file,
+    sandbox_workspace_agent_context_file,
     sandbox_workspace_dir,
     virtual_path_for_thread_file,
 )
@@ -20,37 +20,14 @@ from .provider import (
     shutdown_sandbox_provider,
 )
 
-# Compatibility aliases for legacy imports.
-SandboxBackend = ProvisionerSandboxBackend
-YuxiSandboxBackend = ProvisionerSandboxBackend
-LocalContainerBackend = ProvisionerSandboxBackend
-RemoteSandboxBackend = ProvisionerSandboxBackend
-YuxiSandboxProvider = ProvisionerSandboxProvider
-SandboxInfo = SandboxConnection
-
 # Sandbox-visible paths for viewer/filesystem services.
 USER_DATA_PATH = VIRTUAL_PATH_PREFIX
 SKILLS_PATH = "/home/gem/skills"
 
-# Backward-compatible constants kept for old call sites.
-THREADS_DIR = "threads"
-LARGE_TOOL_RESULTS_DIR = "large-tool-results"
-IDLE_CHECK_INTERVAL = 30
-
 __all__ = [
-    "IDLE_CHECK_INTERVAL",
-    "LARGE_TOOL_RESULTS_DIR",
-    "LocalContainerBackend",
-    "OUTPUTS_DIR",
-    "RemoteSandboxBackend",
-    "SKILLS_PATH",
-    "SandboxBackend",
-    "SandboxInfo",
-    "THREADS_DIR",
-    "YuxiSandboxBackend",
-    "YuxiSandboxProvider",
     "ProvisionerSandboxBackend",
     "ProvisionerSandboxProvider",
+    "SandboxConnection",
     "VIRTUAL_PATH_PREFIX",
     "ensure_thread_dirs",
     "ensure_workspace_default_files",
@@ -61,8 +38,10 @@ __all__ = [
     "sandbox_outputs_dir",
     "sandbox_uploads_dir",
     "sandbox_user_data_dir",
-    "sandbox_workspace_agents_prompt_file",
+    "sandbox_workspace_agent_context_file",
     "sandbox_workspace_dir",
     "shutdown_sandbox_provider",
     "virtual_path_for_thread_file",
+    "USER_DATA_PATH",
+    "SKILLS_PATH",
 ]

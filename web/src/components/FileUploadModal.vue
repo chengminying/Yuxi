@@ -65,36 +65,14 @@
             <p class="param-description">选择文件保存的目标文件夹</p>
           </div>
           <div class="col-item" v-if="uploadMode !== 'url'">
-            <div class="setting-label">
-              OCR 引擎
-              <a-tooltip title="检查服务状态">
-                <ReloadOutlined
-                  class="action-icon refresh-icon"
-                  :class="{ spinning: ocrHealthChecking }"
-                  @click="checkOcrHealth"
-                />
-              </a-tooltip>
-            </div>
+            <div class="setting-label">OCR 引擎（仅应用于 PDF/图片文件）</div>
             <div class="setting-content">
-              <a-select
-                v-model:value="chunkParams.enable_ocr"
-                :options="enableOcrOptions"
-                style="width: 100%"
-                class="ocr-select"
-                @dropdownVisibleChange="handleOcrDropdownVisibleChange"
+              <OCRSelector
+                v-model="processingParams.ocr_engine"
+                :disabled="chunkLoading"
+                @change="ocrEngineTouched = true"
+                @options-loaded="handleOcrOptionsLoaded"
               />
-              <p class="param-description">
-                <template v-if="!isOcrEnabled"> 不启用 OCR，仅处理文本文件 </template>
-                <template v-else-if="selectedOcrStatus === 'healthy'">
-                  {{ selectedOcrMessage || '服务正常' }}
-                </template>
-                <template v-else-if="selectedOcrStatus === 'unknown'">
-                  点击刷新图标检查服务状态
-                </template>
-                <template v-else>
-                  {{ selectedOcrMessage || '服务异常' }}
-                </template>
-              </p>
             </div>
           </div>
         </div>
@@ -107,16 +85,13 @@
               <ChunkParamsConfig
                 :temp-chunk-params="indexParams"
                 :show-qa-split="true"
-                :show-chunk-size-overlap="!isGraphBased"
+                :show-chunk-size-overlap="true"
                 :show-preset="true"
                 :allow-preset-follow-default="true"
                 :database-preset-id="
                   store.database?.additional_params?.chunk_preset_id || 'general'
                 "
               />
-              <p v-if="isGraphBased" class="param-description">
-                LightRAG 按分隔符预切分，超长片段仍会按 token 大小继续切分。
-              </p>
             </div>
           </div>
         </div>
@@ -129,7 +104,7 @@
       </div>
 
       <!-- 文件上传区域 -->
-      <div class="upload-area" v-if="uploadMode !== 'url'">
+      <div class="upload-area" v-if="uploadMode === 'file' || uploadMode === 'folder'">
         <a-upload-dragger
           class="custom-dragger"
           v-model:fileList="fileList"
@@ -141,7 +116,7 @@
           :accept="acceptedFileTypes"
           :before-upload="beforeUpload"
           :customRequest="customRequest"
-          :action="'/api/knowledge/files/upload?db_id=' + databaseId"
+          :action="'/api/knowledge/files/upload?kb_id=' + kbId"
           :headers="getAuthHeaders()"
           @change="handleFileUpload"
           @drop="handleDrop"
@@ -198,6 +173,77 @@
             </div>
             <div class="progress-tip" v-else>上传队列已完成，可点击“添加到知识库”继续下一步。</div>
           </div>
+        </div>
+      </div>
+
+      <!-- 工作区文件选择区域 -->
+      <div class="workspace-area" v-if="uploadMode === 'workspace'">
+        <div class="workspace-toolbar">
+          <div class="workspace-summary">
+            <FolderOpen :size="16" />
+            <span class="workspace-current-path" :title="workspaceCurrentPath">
+              {{ workspaceCurrentPath }}
+            </span>
+            <span
+              >已选择
+              {{ selectedWorkspacePaths.length }}
+              个文件，注意上传会扁平化上传，不保留文件层级结构</span
+            >
+          </div>
+          <div class="workspace-actions">
+            <a-button
+              size="small"
+              class="lucide-icon-btn"
+              :disabled="workspaceCurrentPath === '/' || workspaceLoading"
+              @click="openWorkspaceParent"
+            >
+              <ArrowLeft :size="14" />
+            </a-button>
+            <a-button
+              size="small"
+              @click="loadWorkspaceFiles()"
+              :loading="workspaceLoading"
+              class="lucide-icon-btn"
+            >
+              <RotateCw :size="14" />
+            </a-button>
+          </div>
+        </div>
+
+        <div class="workspace-list" v-if="workspaceItems.length > 0">
+          <button
+            v-for="item in workspaceDirectoryItems"
+            :key="item.path"
+            type="button"
+            class="workspace-item workspace-directory"
+            :disabled="chunkLoading"
+            @click="openWorkspaceDirectory(item.path)"
+          >
+            <a-checkbox disabled />
+            <FileTypeIcon is-dir :size="16" class="workspace-file-icon" />
+            <span class="workspace-file-name" :title="item.path">{{ item.name }}</span>
+          </button>
+
+          <label
+            v-for="item in workspaceFileItems"
+            :key="item.path"
+            class="workspace-item"
+            :class="{ disabled: !item.supported }"
+          >
+            <a-checkbox
+              :checked="selectedWorkspacePathSet.has(item.path)"
+              :disabled="!item.supported || chunkLoading"
+              @change="toggleWorkspacePath(item.path, $event.target.checked)"
+            />
+            <FileTypeIcon :name="item.path" :size="16" class="workspace-file-icon" />
+            <span class="workspace-file-name" :title="item.path">{{ item.path }}</span>
+            <span class="workspace-file-size">{{ formatFileSize(item.size) }}</span>
+          </label>
+        </div>
+
+        <div class="url-empty-tip" v-else>
+          <Info :size="16" />
+          <span>{{ workspaceLoading ? '正在加载工作区文件' : '当前目录暂无文件' }}</span>
         </div>
       </div>
 
@@ -293,16 +339,18 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, h } from 'vue'
 import { message, Upload, Modal } from 'ant-design-vue'
 import { useUserStore } from '@/stores/user'
+import { useConfigStore } from '@/stores/config'
 import { useDatabaseStore } from '@/stores/database'
-import { ocrApi } from '@/apis/system_api'
 import { fileApi, documentApi } from '@/apis/knowledge_api'
-import { ReloadOutlined } from '@ant-design/icons-vue'
+import { getWorkspaceTree } from '@/apis/workspace_api'
 import {
   FileUp,
   FolderUp,
+  FolderOpen,
+  ArrowLeft,
   RotateCw,
   CircleHelp,
   Info,
@@ -313,8 +361,10 @@ import {
   ChevronDown,
   ChevronUp
 } from 'lucide-vue-next'
-import { h } from 'vue'
+import { buildChunkParamsPayload } from '@/utils/chunkUtils'
 import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue'
+import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
+import OCRSelector from '@/components/OCRSelector.vue'
 
 const props = defineProps({
   visible: {
@@ -342,6 +392,9 @@ const props = defineProps({
 const emit = defineEmits(['update:visible', 'success'])
 
 const store = useDatabaseStore()
+const configStore = useConfigStore()
+const DEFAULT_OCR_ENGINE = 'rapid_ocr'
+const defaultOcrEngine = ref(DEFAULT_OCR_ENGINE)
 
 // 文件夹选择相关
 const selectedFolderId = ref(null)
@@ -367,9 +420,14 @@ watch(
   () => props.visible,
   (newVal) => {
     if (newVal) {
+      ocrEngineTouched.value = false
+      applyDefaultOcrEngine()
       selectedFolderId.value = props.currentFolderId
       isFolderUpload.value = props.isFolderMode
       uploadMode.value = props.mode || (props.isFolderMode ? 'folder' : 'file')
+      if (uploadMode.value === 'workspace') {
+        loadWorkspaceFiles()
+      }
     }
   }
 )
@@ -443,17 +501,14 @@ const loadSupportedFileTypes = async () => {
   }
 }
 
-onMounted(() => {
-  loadSupportedFileTypes()
-})
+onMounted(loadSupportedFileTypes)
 
 const visible = computed({
   get: () => props.visible,
   set: (value) => emit('update:visible', value)
 })
 
-const databaseId = computed(() => store.databaseId)
-const kbType = computed(() => store.database.kb_type)
+const kbId = computed(() => store.kbId)
 const chunkLoading = computed(() => store.state.chunkLoading)
 
 // 上传模式
@@ -519,6 +574,9 @@ const canSubmit = computed(() => {
   if (uploadMode.value === 'url') {
     return urlList.value.some((item) => item.status === 'success')
   }
+  if (uploadMode.value === 'workspace') {
+    return selectedWorkspacePaths.value.length > 0 && !workspaceLoading.value
+  }
   return successUploadCount.value > 0 && !hasPendingUploads.value
 })
 
@@ -543,6 +601,13 @@ const uploadModeOptions = computed(() => [
       h(Link, { size: 16, class: 'option-icon' }),
       h('span', { class: 'option-text' }, '解析 URL')
     ])
+  },
+  {
+    value: 'workspace',
+    label: h('div', { class: 'segmented-option' }, [
+      h(FolderOpen, { size: 16, class: 'option-icon' }),
+      h('span', { class: 'option-text' }, '工作区')
+    ])
   }
 ])
 
@@ -553,6 +618,9 @@ watch(uploadMode, (val) => {
   sameNameFiles.value = []
   urlList.value = []
   newUrl.value = ''
+  selectedWorkspacePaths.value = []
+  workspaceCurrentPath.value = '/'
+  workspaceItems.value = []
   for (const task of uploadQueue.value) {
     task.canceled = true
   }
@@ -560,6 +628,9 @@ watch(uploadMode, (val) => {
   uploadTaskStatus.value = {}
   uploadTaskProgress.value = {}
   progressExpanded.value = false
+  if (val === 'workspace') {
+    loadWorkspaceFiles('/')
+  }
 })
 
 watch(fileList, (newFileList) => {
@@ -614,7 +685,7 @@ const mergeSameNameFiles = (sameNameList = []) => {
 const fetchSingleUrlItem = async (item) => {
   item.status = 'fetching'
   try {
-    const res = await fileApi.fetchUrl(item.url, databaseId.value)
+    const res = await fileApi.fetchUrl(item.url, kbId.value)
     item.status = 'success'
     item.data = res
     mergeSameNameFiles(res.same_name_files)
@@ -675,58 +746,94 @@ const removeUrl = (index) => {
   urlList.value.splice(index, 1)
 }
 
-// OCR服务健康状态
-const ocrHealthStatus = ref({
-  rapid_ocr: { status: 'unknown', message: '' },
-  mineru_ocr: { status: 'unknown', message: '' },
-  mineru_official: { status: 'unknown', message: '' },
-  pp_structure_v3_ocr: { status: 'unknown', message: '' },
-  deepseek_ocr: { status: 'unknown', message: '' }
-})
+// 工作区文件选择
+const workspaceLoading = ref(false)
+const workspaceItems = ref([])
+const workspaceCurrentPath = ref('/')
+const selectedWorkspacePaths = ref([])
+const selectedWorkspacePathSet = computed(() => new Set(selectedWorkspacePaths.value))
+const workspaceDirectoryItems = computed(() => workspaceItems.value.filter((entry) => entry.is_dir))
+const workspaceFileItems = computed(() =>
+  workspaceItems.value
+    .filter((entry) => !entry.is_dir)
+    .map((entry) => ({
+      ...entry,
+      supported: isSupportedExtension(entry.name || entry.path)
+    }))
+)
 
-// OCR健康检查状态
-const ocrHealthChecking = ref(false)
+const formatFileSize = (size) => {
+  if (!Number.isFinite(size)) return '-'
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
 
-// 分块参数
-const chunkParams = ref({
-  enable_ocr: 'disable'
+const loadWorkspaceFiles = async (path = workspaceCurrentPath.value) => {
+  if (workspaceLoading.value) return
+  const targetPath = typeof path === 'string' ? path : workspaceCurrentPath.value
+
+  workspaceLoading.value = true
+  try {
+    const data = await getWorkspaceTree(targetPath, false, false)
+    const entries = Array.isArray(data?.entries) ? data.entries : []
+    workspaceCurrentPath.value = targetPath
+    workspaceItems.value = entries
+  } catch (error) {
+    console.error('加载工作区文件失败:', error)
+    message.error('加载工作区文件失败: ' + (error.message || '未知错误'))
+  } finally {
+    workspaceLoading.value = false
+  }
+}
+
+const openWorkspaceDirectory = (path) => {
+  loadWorkspaceFiles(path)
+}
+
+const openWorkspaceParent = () => {
+  if (workspaceCurrentPath.value === '/') return
+  const normalized = workspaceCurrentPath.value.replace(/\/$/, '')
+  const index = normalized.lastIndexOf('/')
+  const parentPath = index <= 0 ? '/' : normalized.slice(0, index)
+  loadWorkspaceFiles(parentPath)
+}
+
+const toggleWorkspacePath = (path, checked) => {
+  if (checked) {
+    if (!selectedWorkspacePaths.value.includes(path)) {
+      selectedWorkspacePaths.value = [...selectedWorkspacePaths.value, path]
+    }
+    return
+  }
+  selectedWorkspacePaths.value = selectedWorkspacePaths.value.filter((item) => item !== path)
+}
+
+const ocrEngineTouched = ref(false)
+
+// 解析参数
+const processingParams = ref({
+  ocr_engine: DEFAULT_OCR_ENGINE
 })
 
 // 自动入库相关
 const autoIndex = ref(false)
 const indexParams = ref({
-  chunk_size: 1000,
-  chunk_overlap: 200,
-  qa_separator: '',
-  chunk_preset_id: ''
+  chunk_preset_id: '',
+  chunk_parser_config: {}
 })
 
 const buildAutoIndexParams = () => {
-  const payload = {}
-  if (indexParams.value.chunk_preset_id) {
-    payload.chunk_preset_id = indexParams.value.chunk_preset_id
-  }
-
-  if (isGraphBased.value) {
-    payload.qa_separator = indexParams.value.qa_separator || ''
-    return payload
-  }
-  return {
-    ...indexParams.value,
-    ...payload
-  }
+  return buildChunkParamsPayload(indexParams.value, {
+    includeSizeOverlap: true
+  })
 }
-
-const isGraphBased = computed(() => {
-  const type = kbType.value?.toLowerCase()
-  return type === 'lightrag'
-})
 
 const isFolderUpload = ref(false)
 
 // 计算属性：是否启用了OCR
 const isOcrEnabled = computed(() => {
-  return chunkParams.value.enable_ocr !== 'disable'
+  return processingParams.value.ocr_engine !== 'disable'
 })
 
 // 上传模式切换相关逻辑已移除
@@ -777,124 +884,48 @@ const hasZipFiles = computed(() => {
   })
 })
 
-// 计算属性：OCR选项
-const enableOcrOptions = computed(() => [
-  {
-    value: 'disable',
-    label: '不启用',
-    title: '不启用'
-  },
-  {
-    value: 'rapid_ocr',
-    label: getRapidOcrLabel(),
-    title: 'ONNX with RapidOCR',
-    disabled:
-      ocrHealthStatus.value?.rapid_ocr?.status === 'unavailable' ||
-      ocrHealthStatus.value?.rapid_ocr?.status === 'error'
-  },
-  {
-    value: 'mineru_ocr',
-    label: getMinerULabel(),
-    title: 'MinerU OCR',
-    disabled:
-      ocrHealthStatus.value?.mineru_ocr?.status === 'unavailable' ||
-      ocrHealthStatus.value?.mineru_ocr?.status === 'error'
-  },
-  {
-    value: 'mineru_official',
-    label: getMinerUOfficialLabel(),
-    title: 'MinerU Official API',
-    disabled:
-      ocrHealthStatus.value?.mineru_official?.status === 'unavailable' ||
-      ocrHealthStatus.value?.mineru_official?.status === 'error'
-  },
-  {
-    value: 'pp_structure_v3_ocr',
-    label: getPPStructureV3Label(),
-    title: 'PP-Structure-V3',
-    disabled:
-      ocrHealthStatus.value?.pp_structure_v3_ocr?.status === 'unavailable' ||
-      ocrHealthStatus.value?.pp_structure_v3_ocr?.status === 'error'
-  },
-  {
-    value: 'deepseek_ocr',
-    label: getDeepSeekOcrLabel(),
-    title: 'DeepSeek OCR (SiliconFlow)',
-    disabled:
-      ocrHealthStatus.value?.deepseek_ocr?.status === 'unavailable' ||
-      ocrHealthStatus.value?.deepseek_ocr?.status === 'error'
-  }
-])
+const ocrEngineOptions = ref([])
 
-// 获取当前选中OCR服务的状态
-const selectedOcrStatus = computed(() => {
-  switch (chunkParams.value.enable_ocr) {
-    case 'rapid_ocr':
-      return ocrHealthStatus.value?.rapid_ocr?.status || 'unknown'
-    case 'mineru_ocr':
-      return ocrHealthStatus.value?.mineru_ocr?.status || 'unknown'
-    case 'mineru_official':
-      return ocrHealthStatus.value?.mineru_official?.status || 'unknown'
-    case 'pp_structure_v3_ocr':
-      return ocrHealthStatus.value?.pp_structure_v3_ocr?.status || 'unknown'
-    case 'deepseek_ocr':
-      return ocrHealthStatus.value?.deepseek_ocr?.status || 'unknown'
-    default:
-      return null
-  }
-})
-
-// 获取当前选中OCR服务的状态消息
-const selectedOcrMessage = computed(() => {
-  switch (chunkParams.value.enable_ocr) {
-    case 'rapid_ocr':
-      return ocrHealthStatus.value?.rapid_ocr?.message || ''
-    case 'mineru_ocr':
-      return ocrHealthStatus.value?.mineru_ocr?.message || ''
-    case 'mineru_official':
-      return ocrHealthStatus.value?.mineru_official?.message || ''
-    case 'pp_structure_v3_ocr':
-      return ocrHealthStatus.value?.pp_structure_v3_ocr?.message || ''
-    case 'deepseek_ocr':
-      return ocrHealthStatus.value?.deepseek_ocr?.message || ''
-    default:
-      return ''
-  }
-})
-
-// OCR服务状态图标映射
-const STATUS_ICONS = {
-  healthy: '✅',
-  unavailable: '❌',
-  unhealthy: '⚠️',
-  timeout: '⏰',
-  error: '⚠️',
-  unknown: '❓'
+const handleOcrOptionsLoaded = (data) => {
+  const engines = Array.isArray(data?.engines) ? data.engines : []
+  ocrEngineOptions.value = engines
+    .filter((engine) => engine.engine_id !== 'disable')
+    .map((engine) => ({ value: engine.engine_id }))
+  defaultOcrEngine.value = data?.default_engine || DEFAULT_OCR_ENGINE
+  if (!ocrEngineTouched.value) applyDefaultOcrEngine()
 }
 
-// OCR选项标签生成通用函数
-const getOcrLabel = (serviceKey, displayName) => {
-  const status = ocrHealthStatus.value?.[serviceKey]?.status || 'unknown'
-  return `${STATUS_ICONS[status] || '❓'} ${displayName}`
+const resolveDefaultOcrEngine = () => {
+  const configuredEngine = String(
+    configStore.config?.default_ocr_engine || defaultOcrEngine.value || DEFAULT_OCR_ENGINE
+  ).trim()
+  if (configuredEngine === 'disable') return configuredEngine
+  return ocrEngineOptions.value.some((option) => option.value === configuredEngine)
+    ? configuredEngine
+    : DEFAULT_OCR_ENGINE
 }
 
-// 兼容性包装器
-const getRapidOcrLabel = () => getOcrLabel('rapid_ocr', 'RapidOCR (ONNX)')
-const getMinerULabel = () => getOcrLabel('mineru_ocr', 'MinerU OCR')
-const getMinerUOfficialLabel = () => getOcrLabel('mineru_official', 'MinerU Official API')
-const getPPStructureV3Label = () => getOcrLabel('pp_structure_v3_ocr', 'PP-Structure-V3')
-const getDeepSeekOcrLabel = () => getOcrLabel('deepseek_ocr', 'DeepSeek OCR')
+const applyDefaultOcrEngine = () => {
+  processingParams.value.ocr_engine = resolveDefaultOcrEngine()
+}
+
+watch(
+  () => configStore.config?.default_ocr_engine,
+  () => {
+    if (props.visible && !ocrEngineTouched.value) applyDefaultOcrEngine()
+  }
+)
 
 // 验证OCR服务可用性
 const validateOcrService = () => {
-  if (chunkParams.value.enable_ocr === 'disable') {
+  if (!isOcrEnabled.value) {
     return true
   }
 
-  const status = selectedOcrStatus.value
-  if (status === 'unavailable' || status === 'error') {
-    const ocrMessage = selectedOcrMessage.value
-    message.error(`OCR服务不可用: ${ocrMessage}`)
+  if (
+    !ocrEngineOptions.value.some((option) => option.value === processingParams.value.ocr_engine)
+  ) {
+    message.error('OCR 引擎选项尚未加载，请稍后重试')
     return false
   }
 
@@ -931,7 +962,7 @@ const showSameNameFilesInUploadArea = (files) => {
 const downloadSameNameFile = async (file) => {
   try {
     // 获取当前数据库ID
-    const currentDbId = databaseId.value
+    const currentDbId = kbId.value
     if (!currentDbId) {
       message.error('知识库ID不存在')
       return
@@ -970,7 +1001,7 @@ const deleteSameNameFile = (file) => {
     onOk: async () => {
       try {
         // 获取当前数据库ID
-        const currentDbId = databaseId.value
+        const currentDbId = kbId.value
         if (!currentDbId) {
           message.error('知识库ID不存在')
           return
@@ -1059,8 +1090,8 @@ const runUploadTask = (task) => {
       isFolderUpload.value && file.webkitRelativePath ? file.webkitRelativePath : file.name
     formData.append('file', file, filename)
 
-    const dbId = databaseId.value
-    if (!dbId) {
+    const currentKbId = kbId.value
+    if (!currentKbId) {
       const error = new Error('Database ID is missing')
       if (fileUid) {
         uploadTaskStatus.value[fileUid] = 'error'
@@ -1072,7 +1103,7 @@ const runUploadTask = (task) => {
 
     const xhr = new XMLHttpRequest()
     task.xhr = xhr
-    xhr.open('POST', `/api/knowledge/files/upload?db_id=${dbId}`)
+    xhr.open('POST', `/api/knowledge/files/upload?kb_id=${currentKbId}`)
 
     const headers = getAuthHeaders()
     for (const [key, value] of Object.entries(headers)) {
@@ -1178,28 +1209,6 @@ const handleDrop = () => {}
 
 // 已移除文件夹上传逻辑
 
-const checkOcrHealth = async () => {
-  if (ocrHealthChecking.value) return
-
-  ocrHealthChecking.value = true
-  try {
-    const healthData = await ocrApi.getHealth()
-    ocrHealthStatus.value = healthData.services
-  } catch (error) {
-    console.error('OCR健康检查失败:', error)
-    message.error('OCR服务健康检查失败')
-  } finally {
-    ocrHealthChecking.value = false
-  }
-}
-
-const handleOcrDropdownVisibleChange = (open) => {
-  if (!open) {
-    return
-  }
-  checkOcrHealth()
-}
-
 const getAuthHeaders = () => {
   const userStore = useUserStore()
   return userStore.getAuthHeaders()
@@ -1214,13 +1223,75 @@ const openDocLink = () => {
 }
 
 const chunkData = async () => {
-  if (!databaseId.value) {
+  if (!kbId.value) {
     message.error('请先选择知识库')
     return
   }
 
   // 验证OCR服务可用性（非 URL 模式下）
   if (uploadMode.value !== 'url' && !validateOcrService()) {
+    return
+  }
+
+  if (uploadMode.value === 'workspace') {
+    if (selectedWorkspacePaths.value.length === 0) {
+      message.error('请先选择工作区文件')
+      return
+    }
+
+    try {
+      store.state.chunkLoading = true
+      const res = await fileApi.importWorkspaceFiles(kbId.value, selectedWorkspacePaths.value)
+      const importedItems = Array.isArray(res?.items) ? res.items : []
+      if (importedItems.length === 0) {
+        message.error('工作区文件导入失败')
+        return
+      }
+
+      const imageExtensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif']
+      const items = []
+      const content_hashes = {}
+      const file_sizes = {}
+      for (const item of importedItems) {
+        const filePath = item.file_path
+        if (!filePath) continue
+        items.push(filePath)
+        if (item.content_hash) content_hashes[filePath] = item.content_hash
+        if (Number.isFinite(item.size)) file_sizes[filePath] = item.size
+        mergeSameNameFiles(item.same_name_files)
+
+        const ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase()
+        if (imageExtensions.includes(ext) && !isOcrEnabled.value) {
+          message.error({
+            content: '检测到图片文件，必须启用 OCR 才能提取文本内容。',
+            duration: 5
+          })
+          return
+        }
+      }
+
+      const params = { ...processingParams.value, content_hashes, file_sizes }
+      if (autoIndex.value) {
+        params.auto_index = true
+        Object.assign(params, buildAutoIndexParams())
+      }
+
+      await store.addFiles({
+        items,
+        contentType: 'file',
+        params,
+        parentId: selectedFolderId.value
+      })
+
+      emit('success')
+      handleCancel()
+      selectedWorkspacePaths.value = []
+    } catch (error) {
+      console.error('工作区文件导入失败:', error)
+      message.error('工作区文件导入失败: ' + (error.message || '未知错误'))
+    } finally {
+      store.state.chunkLoading = false
+    }
     return
   }
 
@@ -1258,7 +1329,7 @@ const chunkData = async () => {
 
     try {
       store.state.chunkLoading = true
-      const params = { ...chunkParams.value }
+      const params = { ...processingParams.value }
       if (autoIndex.value) {
         params.auto_index = true
         Object.assign(params, buildAutoIndexParams())
@@ -1309,6 +1380,7 @@ const chunkData = async () => {
   // 提取已上传的文件信息
   const items = []
   const content_hashes = {}
+  const file_sizes = {}
   for (const file of fileList.value) {
     if (file.status !== 'done') continue
     const file_path = file.response?.file_path
@@ -1317,10 +1389,11 @@ const chunkData = async () => {
 
     items.push(file_path)
     if (content_hash) content_hashes[file_path] = content_hash
+    if (Number.isFinite(file.response?.size)) file_sizes[file_path] = file.response.size
 
     // 检查是否需要OCR
     const ext = file_path.substring(file_path.lastIndexOf('.')).toLowerCase()
-    if (imageExtensions.includes(ext) && chunkParams.value.enable_ocr === 'disable') {
+    if (imageExtensions.includes(ext) && !isOcrEnabled.value) {
       message.error({
         content: '检测到图片文件，必须启用 OCR 才能提取文本内容。',
         duration: 5
@@ -1336,7 +1409,7 @@ const chunkData = async () => {
 
   try {
     store.state.chunkLoading = true
-    const params = { ...chunkParams.value, content_hashes }
+    const params = { ...processingParams.value, content_hashes, file_sizes }
     if (autoIndex.value) {
       params.auto_index = true
       Object.assign(params, buildAutoIndexParams())
@@ -1793,6 +1866,107 @@ const chunkData = async () => {
     color: var(--main-600);
     background: var(--gray-100);
   }
+}
+
+/* Workspace Area */
+.workspace-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.workspace-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workspace-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--gray-700);
+  min-width: 0;
+}
+
+.workspace-current-path {
+  max-width: 360px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.workspace-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.workspace-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--gray-0);
+}
+
+.workspace-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.2s;
+
+  &:hover {
+    background: var(--gray-50);
+  }
+
+  &.disabled {
+    cursor: not-allowed;
+    color: var(--gray-400);
+  }
+}
+
+.workspace-directory {
+  color: var(--gray-800);
+}
+
+.workspace-file-icon {
+  flex-shrink: 0;
+  color: var(--main-500);
+}
+
+.workspace-file-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--gray-700);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-file-size {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--gray-500);
 }
 
 /* URL Area */

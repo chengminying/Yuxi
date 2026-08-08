@@ -13,15 +13,17 @@ class SandboxRecord:
 
 
 class ProvisionerClient:
-    def __init__(self, base_url: str, *, timeout_seconds: int = 20):
+    def __init__(self, base_url: str, *, token: str, timeout_seconds: int = 20):
         self._base_url = base_url.rstrip("/")
         self._timeout = httpx.Timeout(timeout_seconds)
+        self._headers = {"Authorization": f"Bearer {token}"}
 
     def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
         return httpx.request(
             method=method,
             url=f"{self._base_url}{path}",
             timeout=self._timeout,
+            headers=self._headers,
             **kwargs,
         )
 
@@ -29,11 +31,27 @@ class ProvisionerClient:
         response = self._request("GET", "/health")
         return response.status_code == 200
 
-    def create(self, sandbox_id: str, thread_id: str, user_id: str) -> SandboxRecord:
+    def create(
+        self,
+        sandbox_id: str,
+        thread_id: str,
+        uid: str,
+        env: dict[str, str] | None = None,
+        *,
+        file_thread_id: str | None = None,
+        skills_thread_id: str | None = None,
+    ) -> SandboxRecord:
         response = self._request(
             "POST",
             "/api/sandboxes",
-            json={"sandbox_id": sandbox_id, "thread_id": thread_id, "user_id": user_id},
+            json={
+                "sandbox_id": sandbox_id,
+                "thread_id": thread_id,
+                "file_thread_id": file_thread_id or thread_id,
+                "skills_thread_id": skills_thread_id or thread_id,
+                "uid": uid,
+                "env": env or {},
+            },
         )
         if response.status_code >= 400:
             raise RuntimeError(f"failed to create sandbox {sandbox_id}: {response.status_code} {response.text}")

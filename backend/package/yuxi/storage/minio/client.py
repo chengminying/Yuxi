@@ -10,6 +10,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from io import BytesIO
+from urllib.parse import quote, urlsplit
 
 from urllib3 import BaseHTTPResponse
 from yuxi.utils import logger
@@ -37,6 +38,24 @@ class UploadResult:
         self.object_name = object_name
 
 
+def normalize_public_minio_url(value: str | None) -> str | None:
+    if not value or value.startswith("/minio/public/"):
+        return value
+    try:
+        parsed = urlsplit(value)
+        if parsed.port != 9000 or not parsed.path.startswith("/public/"):
+            return value
+    except ValueError:
+        return value
+    public_base_url = (os.getenv("MINIO_PUBLIC_URL") or "/minio").rstrip("/")
+    normalized = f"{public_base_url}{parsed.path}"
+    if parsed.query:
+        normalized = f"{normalized}?{parsed.query}"
+    if parsed.fragment:
+        normalized = f"{normalized}#{parsed.fragment}"
+    return normalized
+
+
 class MinIOClient:
     """
     简化的 MinIO 客户端类
@@ -56,6 +75,7 @@ class MinIOClient:
         self.endpoint = os.getenv("MINIO_URI") or "http://minio:9000"
         self.access_key = os.getenv("MINIO_ACCESS_KEY") or "minioadmin"
         self.secret_key = os.getenv("MINIO_SECRET_KEY") or "minioadmin"
+        self.public_base_url = (os.getenv("MINIO_PUBLIC_URL") or "/minio").rstrip("/")
         self._client = None
 
         # 设置公开访问端点
@@ -124,7 +144,10 @@ class MinIOClient:
             )
 
             assert result is not None
-            url = f"http://{self.public_endpoint}/{bucket_name}/{object_name}"
+            if bucket_name in self.PUBLIC_READ_BUCKETS:
+                url = f"{self.public_base_url}/{bucket_name}/{quote(object_name, safe='/')}"
+            else:
+                url = f"http://{self.public_endpoint}/{bucket_name}/{object_name}"
 
             return UploadResult(url, bucket_name, object_name)
 
@@ -189,7 +212,7 @@ class MinIOClient:
             return data
 
         except S3Error as e:
-            if "NoSuchKey" in str(e):
+            if e.code == "NoSuchKey":
                 raise StorageError(f"对象 '{object_name}' 在存储桶 '{bucket_name}' 中不存在")
             raise StorageError(f"下载文件失败: {e}")
 
@@ -204,7 +227,7 @@ class MinIOClient:
             return response
 
         except S3Error as e:
-            if "NoSuchKey" in str(e):
+            if e.code == "NoSuchKey":
                 raise StorageError(f"对象 '{object_name}' 在存储桶 '{bucket_name}' 中不存在")
             raise StorageError(f"下载文件失败: {e}")
 
@@ -218,7 +241,7 @@ class MinIOClient:
             return data
 
         except S3Error as e:
-            if "NoSuchKey" in str(e):
+            if e.code == "NoSuchKey":
                 raise StorageError(f"对象 '{object_name}' 在存储桶 '{bucket_name}' 中不存在")
             raise StorageError(f"下载文件失败: {e}")
 
@@ -237,7 +260,7 @@ class MinIOClient:
             return True
 
         except S3Error as e:
-            if "NoSuchKey" in str(e):
+            if e.code == "NoSuchKey":
                 logger.warning(f"要删除的对象 '{object_name}' 不存在")
                 return False
             raise StorageError(f"删除文件失败: {e}")
@@ -298,7 +321,7 @@ class MinIOClient:
             logger.info(f"成功删除 bucket: {bucket_name}")
             return True
         except S3Error as e:
-            if "NoSuchBucket" in str(e):
+            if e.code == "NoSuchBucket":
                 logger.warning(f"bucket 不存在: {bucket_name}")
                 return False
             raise StorageError(f"删除 bucket 失败: {e}")
@@ -309,9 +332,23 @@ class MinIOClient:
             self.client.stat_object(bucket_name=bucket_name, object_name=object_name)
             return True
         except S3Error as e:
-            if "NoSuchKey" in str(e):
+            if e.code == "NoSuchKey":
                 return False
             raise StorageError(f"检查文件存在性失败: {e}")
+
+    def stat_file(self, bucket_name: str, object_name: str) -> int | None:
+        """获取文件大小（字节），文件不存在时返回 None"""
+        try:
+            stat = self.client.stat_object(bucket_name=bucket_name, object_name=object_name)
+            return stat.size
+        except S3Error as e:
+            if e.code == "NoSuchKey":
+                return None
+            raise StorageError(f"获取文件信息失败: {e}")
+
+    async def astat_file(self, bucket_name: str, object_name: str) -> int | None:
+        """异步获取文件大小（字节），文件不存在时返回 None"""
+        return await asyncio.to_thread(self.stat_file, bucket_name, object_name)
 
     def _ensure_public_read_access(self, bucket_name: str) -> None:
         """设置存储桶策略，允许公开读取对象"""
@@ -326,12 +363,6 @@ class MinIOClient:
                     "Principal": {"AWS": ["*"]},
                     "Action": ["s3:GetObject"],
                     "Resource": [f"arn:aws:s3:::{bucket_name}/*"],
-                },
-                {
-                    "Effect": "Allow",
-                    "Principal": {"AWS": ["*"]},
-                    "Action": ["s3:ListBucket"],
-                    "Resource": [f"arn:aws:s3:::{bucket_name}"],
                 },
             ],
         }

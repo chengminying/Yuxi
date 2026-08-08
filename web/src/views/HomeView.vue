@@ -115,7 +115,7 @@
   </div>
 </template>
 
-<script setup lang="ts">
+<script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
@@ -133,28 +133,11 @@ const themeStore = useThemeStore()
 const faqUrl = 'https://xerrors.github.io/Yuxi/' // info.template.yaml 未提供该链接字段，保留默认值
 
 const isLoading = ref(true)
-const error = ref<{ title: string; message: string } | null>(null)
+const error = ref(null)
 
-type InfoConfig = {
-  organization?: { name?: string; logo?: string }
-  branding?: { name?: string; title?: string; subtitle?: string; subtitles?: string[] }
-  footer?: { copyright?: string }
-  theme?: {
-    primary?: string
-    primary_hover?: string
-    hero_bg?: string
-  }
-  home?: {
-    hero_image?: string
-    hero_eyebrow?: string
-    hero_description?: string
-    capability_cards?: Array<{ title?: string; description?: string; icon?: string; icon_2x?: string }>
-  }
-}
+const infoConfig = ref(null)
 
-const infoConfig = ref<InfoConfig | null>(null)
-
-const normalizeAssetUrl = (url: string) => {
+const normalizeAssetUrl = (url) => {
   const text = (url || '').trim()
   if (!text) return ''
   if (/^(https?:)?\/\//i.test(text)) return text
@@ -225,14 +208,7 @@ const footerCopyright = computed(() => {
   return (text || '© 2025 All rights reserved').trim()
 })
 
-type CapabilityCard = {
-  title: string
-  description: string
-  icon: string
-  iconSrcset: string
-}
-
-const defaultCapabilityCards: CapabilityCard[] = [
+const defaultCapabilityCards = [
   {
     title: '知识共享',
     description: '打破信息孤岛，促进知识在组织内自然流动与沉淀。',
@@ -283,7 +259,7 @@ const defaultCapabilityCards: CapabilityCard[] = [
   }
 ] // info.template.yaml 未提供 home.capability_cards 字段，保留默认值
 
-const capabilityCards = computed<CapabilityCard[]>(() => {
+const capabilityCards = computed(() => {
   const list = infoConfig.value?.home?.capability_cards
   if (!Array.isArray(list) || !list.length) return defaultCapabilityCards
   return list
@@ -298,7 +274,7 @@ const capabilityCards = computed<CapabilityCard[]>(() => {
     .filter((item) => item.title && (item.description || item.icon))
 })
 
-const cssVars = computed<Record<string, string>>(() => ({
+const cssVars = computed(() => ({
   '--home-primary': theme.value.primary,
   '--home-primary-hover': theme.value.primaryHover,
   '--home-hero-bg': themeStore.isDark ? 'var(--main-40)' : theme.value.heroBg,
@@ -327,7 +303,7 @@ const loadData = async () => {
   try {
     await checkHealth()
     const data = await infoStore.loadInfoConfig(true)
-    infoConfig.value = (data || infoStore.infoConfig) as InfoConfig
+    infoConfig.value = data || infoStore.infoConfig
   } catch (e) {
     console.error('加载失败:', e)
   } finally {
@@ -348,34 +324,18 @@ const goLogin = () => {
 }
 
 const goToChat = async () => {
-  // 检查用户是否登录
   if (!userStore.isLoggedIn) {
-    // 登录后应该跳转到默认智能体而不是/agent
-    sessionStorage.setItem('redirect', '/') // 设置为首页，登录后会通过路由守卫处理重定向
+    sessionStorage.setItem('redirect', '/agent')
     router.push('/login')
     return
   }
 
-  // 根据用户角色进行跳转
-  if (userStore.isAdmin) {
-    // 管理员用户跳转到聊天页面
+  try {
     await agentStore.initialize()
     router.push('/agent')
-    return
-  }
-
-  // 普通用户跳转到默认智能体
-  try {
-    // 获取默认智能体
-    const defaultAgent = agentStore.defaultAgent
-    if (defaultAgent?.id) {
-      router.push(`/agent/${defaultAgent.id}`)
-    } else {
-      router.push('/agent')
-    }
   } catch (error) {
     console.error('跳转到智能体页面失败:', error)
-    router.push('/')
+    router.push('/agent')
   }
 }
 
