@@ -22,8 +22,8 @@
 
 ## 验证结果
 
-- 后端单元测试：`1183 passed, 1 skipped`。
-- 真实 API 集成测试：`192 passed, 5 skipped`；跳过项依赖未配置的可选外部能力。
+- 后端单元测试：`1205 passed, 1 skipped`。
+- 真实 API 集成测试：`195 passed, 5 skipped`；跳过项依赖未配置的可选外部能力。
 - MCP 安全、文件系统和个人 Skill Agent 关键 E2E：`6 passed`。
 - 前端单元测试：`10 passed`；前端 ESLint 通过。
 - 本次变更及最新上游变更涉及的 Python 文件 Ruff 通过，`git diff --check` 通过。
