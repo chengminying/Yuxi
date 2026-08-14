@@ -10,6 +10,7 @@
 - PyTorch CPU 依赖改用阿里云镜像并同步两套 `uv.lock`，缩短国内 Docker 构建耗时。
 - MinIO 宿主机端口支持通过 `MINIO_API_PORT/MINIO_CONSOLE_PORT` 配置，默认使用 `9100/9101`，容器内部端口保持不变以避开 Windows 保留端口。
 - 企业定制分支同步 GitHub `upstream/main` 最新代码：保留维盈/中国电信江西工业互联网研究院品牌首页、登录页与静态资源，继续要求 API/worker 等待 Neo4j 健康；MinerU 改用上游 `vLLM 0.11.2 + MinerU 3.4.4` 固定版本实现，不再携带旧 AIMv2 运行时补丁，并保持解析服务仅绑定本机端口。
+- 修复内置 Skill 首次初始化仍写入旧版共享配置的问题，统一持久化 v2 读取/管理范围，避免旧版本升级后个人与共享 Skill 列表因权限配置校验失败而返回 500。
 
 ::: warning 升级提醒
 1. 升级到 v0.7.2 后，管理员此前创建的 stdio MCP 会被禁用，也无法重新启用。请在详情页迁移为 SSE 或 Streamable HTTP，或直接删除；代码内置的系统 stdio MCP 不受影响。

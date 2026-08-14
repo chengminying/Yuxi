@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from yuxi.storage.postgres.models_business import Skill, User
+from yuxi.agents.skills.service import ResolvedSkill
 
 from server.routers.skill_router import skills, user_skills
 from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
@@ -133,7 +135,21 @@ def test_list_skill_cards_route_forces_personal_refresh(monkeypatch):
     async def fake_list_skill_cards(_db, user, *, refresh_personal):
         captured["uid"] = user.uid
         captured["refresh_personal"] = refresh_personal
-        item = _skill(source_type="personal", created_by="user")
+        item = ResolvedSkill(
+            id="personal:demo",
+            slug="demo",
+            name="demo",
+            description="personal skill",
+            source_type="personal",
+            source_scope="personal",
+            source_dir=Path("/tmp/demo"),
+            enabled=True,
+            created_by="user",
+            share_config=None,
+            tool_dependencies=[],
+            mcp_dependencies=[],
+            skill_dependencies=[],
+        )
         return [item], SimpleNamespace(scanned_at="2026-07-30T00:00:00Z", from_cache=False)
 
     monkeypatch.setattr("server.routers.skill_router.list_skill_cards_for_user", fake_list_skill_cards)
@@ -142,6 +158,9 @@ def test_list_skill_cards_route_forces_personal_refresh(monkeypatch):
     resp = client.get("/api/skills?refresh_personal=true")
 
     assert resp.status_code == 200, resp.text
+    assert resp.json()["data"][0]["can_manage"] is True
+    assert resp.json()["data"][0]["effective_permission"] == "manage"
+    assert "share_config" not in resp.json()["data"][0]
     assert resp.json()["personal_cache"] == {
         "scanned_at": "2026-07-30T00:00:00Z",
         "from_cache": False,

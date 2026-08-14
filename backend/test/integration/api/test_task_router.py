@@ -74,13 +74,14 @@ async def test_enqueue_document_creates_task(
     )
     assert create_response.status_code == 200, create_response.text
     kb_id = create_response.json()["kb_id"]
+    item = f"minio://knowledgebases/{kb_id}/pytest-task-router.txt"
 
     try:
         enqueue_response = await test_client.post(
             f"/api/knowledge/databases/{kb_id}/documents",
             json={
-                "items": [],
-                "params": {"content_type": "file"},
+                "items": [item],
+                "params": {"content_type": "file", "content_hashes": {item: "pytest-task-router"}},
             },
             headers=admin_headers,
         )

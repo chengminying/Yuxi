@@ -9,6 +9,8 @@ import pytest
 from yuxi.agents.toolkits.kbs import tools
 from yuxi.knowledge.base import KnowledgeBase
 from yuxi.knowledge.manager import KnowledgeBaseManager
+from yuxi.knowledge.read_models import KnowledgeBaseDetail
+from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
 
 
 def _tool_callable(tool):
@@ -86,7 +88,20 @@ def _patch_retrievers(monkeypatch, *, kb_type: str = "milvus", retriever=None):
         raise AssertionError("knowledge base method is not configured for this test")
 
     async def _fake_get_database_document_support(kb_id: str):
-        return {"kb_id": kb_id, "name": "FAQ", "kb_type": kb_type}, kb_type != "dify"
+        database = KnowledgeBaseDetail(
+            kb_id=kb_id,
+            name="FAQ",
+            description=None,
+            kb_type=kb_type,
+            embedding_model_spec=None,
+            llm_model_spec=None,
+            query_params={},
+            additional_params={},
+            share_config={},
+            created_by=None,
+            created_at=None,
+        )
+        return database, kb_type != "dify"
 
     manager = SimpleNamespace(
         find_file_content=_not_configured,
@@ -125,10 +140,7 @@ async def test_get_mindmap_resolves_current_visible_knowledge_base(monkeypatch) 
         return SimpleNamespace(name="Renamed FAQ", mindmap={"content": "Root", "children": []})
 
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
-    monkeypatch.setattr(
-        "yuxi.repositories.knowledge_base_repository.KnowledgeBaseRepository.get_by_kb_id",
-        fake_get_by_kb_id,
-    )
+    monkeypatch.setattr(KnowledgeBaseRepository, "get_by_kb_id", fake_get_by_kb_id)
 
     result = await _run_get_mindmap(kb_name="FAQ", runtime=SimpleNamespace(context=SimpleNamespace()))
 
