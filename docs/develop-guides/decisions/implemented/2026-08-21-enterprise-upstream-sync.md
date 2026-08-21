@@ -1,6 +1,6 @@
 # 企业定制与官方主线同步
 
-状态：proposed
+状态：implemented
 类型：process
 Owner：web/src/views/HomeView.vue
 
@@ -22,11 +22,11 @@ Owner：web/src/views/HomeView.vue
 
 | 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |
 |---|---|---|---|---|---|
-| 融合内容包含官方最新代码 | 仍停留在旧官方版本或漏掉重写后的提交 | Git 提交图与工作树 | `git merge-base --is-ancestor upstream/main HEAD` | 官方最新提交不是结果祖先 | 内容基于 `upstream/main@d88a0f5c`，待历史连接后复核祖先关系 |
+| 融合内容包含官方最新代码 | 仍停留在旧官方版本或漏掉重写后的提交 | Git 提交图与工作树 | `git merge-base --is-ancestor upstream/main HEAD` | 官方最新提交不是结果祖先 | 通过；内容基于 `upstream/main@d88a0f5c`，祖先检查返回 0 |
 | 企业品牌与部署定制保持可用 | 首页、登录页、品牌资源或 Compose 参数被官方内容覆盖 | `web/`、`docker-compose*.yml`、`.env.template` | 前端测试、构建、真实页面截图与配置差异审查 | 删除企业资源或恢复官方页面后检查失败 | `45 passed`；ESLint、生产构建通过；桌面与移动页面无溢出或控制台错误 |
 | 已有数据可在新版代码上无损启动 | 旧数据库 schema 无法升级或数据被破坏 | `backend/package/yuxi/storage/postgres/manager.py` | 相关 unit、真实 PostgreSQL integration 与启动日志 | 构造旧 schema 后迁移未生成新版约束 | 相关 unit `138 passed`；真实 PostgreSQL 迁移 `1 passed`；新版容器健康启动，升级前备份已校验 |
 | 上传入口统一限制为 500 MB | Web、知识库、工作区或 CLI 仍存在 100 MB 限制 | 各上传入口的源码与测试 | 相关 unit、前端测试和全仓搜索 | 任一入口恢复 100 MB 后测试或搜索失败 | 相关 unit、CLI 全量 `90 passed`、前端测试和源码审查通过 |
-| 企业 GitHub `main` 与本地提交一致 | 推送需要强制覆盖或远端 SHA 不同 | Git 提交图与 GitHub `main` | 非强制 push 后核对远端 SHA | 旧远端 `main` 不是结果祖先 | `Not run` |
+| 企业 GitHub `main` 与本地提交一致 | 推送需要强制覆盖或远端 SHA 不同 | Git 提交图与 GitHub `main` | 非强制 push 后核对远端 SHA | 旧远端 `main` 不是结果祖先 | 通过；旧 `main@959fcce7` 祖先检查返回 0，非强制 push 成功，最终 SHA 经 `ls-remote` 核对 |
 
 ## 风险
 
