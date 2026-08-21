@@ -170,7 +170,7 @@ async def test_upload_file_rejects_oversized_file(monkeypatch):
         await knowledge_router.upload_file(upload, kb_id="kb_1", current_user=SimpleNamespace(uid="user_1"))
 
     assert exc_info.value.status_code == 400
-    assert "100 MB" in exc_info.value.detail
+    assert "500 MB" in exc_info.value.detail
 
 
 async def test_upload_file_invalid_kb_fails_before_read_or_minio(monkeypatch):
@@ -243,7 +243,7 @@ async def test_markdown_endpoint_rejects_oversized_file(monkeypatch):
         await knowledge_router.mark_it_down(upload, current_user=SimpleNamespace(uid="user_1"))
 
     assert exc_info.value.status_code == 400
-    assert "100 MB" in exc_info.value.detail
+    assert "500 MB" in exc_info.value.detail
 
 
 async def test_index_documents_uses_uid_for_operator(monkeypatch):

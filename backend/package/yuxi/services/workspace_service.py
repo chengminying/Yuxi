@@ -648,7 +648,7 @@ async def _write_workspace_upload(file: UploadFile, target: Path) -> None:
                 file,
                 buffer,
                 max_size_bytes=MAX_WORKSPACE_UPLOAD_SIZE_BYTES,
-                too_large_message="文件过大，当前仅支持 100 MB 以内的文件",
+                too_large_message="文件过大，当前仅支持 500 MB 以内的文件",
             )
         upload_completed = True
     except FileExistsError as exc:

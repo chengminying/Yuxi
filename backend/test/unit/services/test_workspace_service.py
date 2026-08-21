@@ -358,7 +358,7 @@ async def test_upload_workspace_files_rejects_oversized_file_and_cleans_partial_
         await svc.upload_workspace_files(parent_path="/", files=uploads, current_user=user)
 
     assert exc_info.value.status_code == 400
-    assert "100 MB" in exc_info.value.detail
+    assert "500 MB" in exc_info.value.detail
     assert not (root / "small.txt").exists()
     assert not (root / "large.txt").exists()
 

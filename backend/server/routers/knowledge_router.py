@@ -1886,7 +1886,7 @@ async def import_workspace_files(
 
         size = target.stat().st_size
         if size > MAX_WORKSPACE_UPLOAD_SIZE_BYTES:
-            raise HTTPException(status_code=400, detail="文件过大，当前仅支持 100 MB 以内的工作区文件")
+            raise HTTPException(status_code=400, detail="文件过大，当前仅支持 500 MB 以内的工作区文件")
 
         file_bytes = await asyncio.to_thread(target.read_bytes)
         content_hash = await calculate_content_hash(file_bytes)
@@ -1954,7 +1954,7 @@ async def upload_file(
         file_bytes = await read_upload_with_limit(
             file,
             max_size_bytes=MAX_UPLOAD_SIZE_BYTES,
-            too_large_message="文件过大，当前仅支持 100 MB 以内的文件",
+            too_large_message="文件过大，当前仅支持 500 MB 以内的文件",
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -2025,7 +2025,7 @@ async def mark_it_down(file: UploadFile = File(...), current_user: User = Depend
             file,
             temp_path,
             max_size_bytes=MAX_UPLOAD_SIZE_BYTES,
-            too_large_message="文件过大，当前仅支持 100 MB 以内的文件",
+            too_large_message="文件过大，当前仅支持 500 MB 以内的文件",
         )
 
         markdown_content = await parse_document(temp_path)

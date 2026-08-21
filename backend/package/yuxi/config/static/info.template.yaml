@@ -22,6 +22,6 @@ branding:
 
 # 页脚信息
 footer:
-  copyright: "© 中国电信（江西）工业互联网研究院 2026 v{{YUXI_VERSION}}"
+  copyright: "© 中国电信（江西）工业互联网研究院"
   user_agreement_url: "/protocols/user-agreement.template.html"
   privacy_policy_url: "/protocols/privacy-policy.template.html"
