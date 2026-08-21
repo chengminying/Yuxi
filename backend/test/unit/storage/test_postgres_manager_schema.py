@@ -63,6 +63,28 @@ async def _recording_manager():
 
 
 @pytest.mark.asyncio
+async def test_ensure_legacy_schema_bridges_enterprise_06_columns_and_preserves_model_specs():
+    """0.6.x 企业字段迁移必须覆盖身份、知识库、运行和 MCP 基础结构。"""
+    async with _recording_manager() as (manager, connection):
+        await manager.ensure_legacy_schema()
+
+    statements = "\n".join(connection.statements)
+
+    assert "ALTER TABLE users RENAME COLUMN user_id TO uid" in statements
+    assert "ALTER TABLE knowledge_bases RENAME COLUMN db_id TO kb_id" in statements
+    assert "ALTER TABLE knowledge_files RENAME COLUMN db_id TO kb_id" in statements
+    assert "ALTER TABLE conversations RENAME COLUMN user_id TO uid" in statements
+    assert "ALTER TABLE agent_runs RENAME COLUMN user_id TO uid" in statements
+    assert "embed_info->>'model_id'" in statements
+    assert "llm_info->>'model_id'" in statements
+    assert "agent_runs ADD COLUMN IF NOT EXISTS run_type" in statements
+    assert "messages ADD COLUMN IF NOT EXISTS delivery_status" in statements
+    assert "ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS slug" in statements
+    assert "ALTER TABLE IF EXISTS skills DROP COLUMN IF EXISTS is_builtin" in statements
+    assert "UPDATE conversations SET agent_id = 'default-chatbot'" in statements
+
+
+@pytest.mark.asyncio
 async def test_ensure_business_schema_backfills_subagent_thread_columns_before_dropping_legacy_columns():
     async with _recording_manager() as (manager, connection):
         await manager.ensure_business_schema()

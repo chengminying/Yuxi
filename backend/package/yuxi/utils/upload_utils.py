@@ -3,7 +3,7 @@ from pathlib import Path
 import aiofiles
 from fastapi import UploadFile
 
-MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024
+MAX_UPLOAD_SIZE_BYTES = 500 * 1024 * 1024
 
 
 async def write_upload_to_buffer(

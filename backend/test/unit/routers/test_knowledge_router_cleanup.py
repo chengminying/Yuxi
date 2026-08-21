@@ -135,7 +135,7 @@ async def test_rejects_oversized_file(monkeypatch, call_upload):
         await call_upload(upload)
 
     assert exc_info.value.status_code == 400
-    assert "100 MB" in exc_info.value.detail
+    assert "500 MB" in exc_info.value.detail
 
 
 @pytest.mark.parametrize(

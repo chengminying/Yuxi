@@ -20,9 +20,14 @@ backend/package/.venv/
 
 # 忽略 node_modules 文件夹（前端项目）
 web/node_modules/
+web/.pnpm-store/
 
 # 忽略 Docker 运行时数据卷
 docker/volumes/
+
+# 忽略本地测试与演示数据
+Yuxi功能测试资料包/
+demo-data/
 
 # 忽略日志和临时文件
 *.log

@@ -254,9 +254,7 @@ async def test_write_workspace_file_content_updates_file(
     target = root / f"note.{extension}"
     target.write_text(original, encoding="utf-8")
 
-    result = await svc.write_workspace_file_content(
-        path=f"/note.{extension}", content=content, current_user=user
-    )
+    result = await svc.write_workspace_file_content(path=f"/note.{extension}", content=content, current_user=user)
 
     assert result["success"] is True
     assert result["path"] == f"/note.{extension}"
@@ -345,7 +343,7 @@ async def test_upload_workspace_files_rejects_oversized_file_and_cleans_partial_
         await svc.upload_workspace_files(parent_path="/", files=uploads, current_user=user)
 
     assert exc_info.value.status_code == 400
-    assert "100 MB" in exc_info.value.detail
+    assert "500 MB" in exc_info.value.detail
     assert not (root / "small.txt").exists()
     assert not (root / "large.txt").exists()
 

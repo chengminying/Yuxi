@@ -164,6 +164,6 @@ HOST_IP=your_server_ip
 2. **GPU 要求**：MinerU 和 PP-Structure-V3 需要 GPU 支持
 3. **API 密钥**：DeepSeek OCR 复用 `siliconflow-cn` 模型供应商凭证；MinerU Official 和 PaddleOCR API 需要各自的 API 密钥或 Access Token
 4. **超时处理**：复杂文档解析可能耗时较长，可通过 `MINERU_TIMEOUT` 环境变量调整超时时间
-5. **文件大小限制**：知识库与工作区的单个上传文件大小均不超过 100 MB；工作区一次最多上传 50 个文件
+5. **文件大小限制**：知识库与工作区的单个上传文件大小均不超过 500 MB；工作区一次最多上传 50 个文件
 6. **解析配置**：文件只保存当次 `ocr_engine` 与分块参数快照；端点和凭证执行时使用最新通用配置或环境变量
 7. **Agent 读取非文本文件**：Agent 的 `read_file` 只直接读取 UTF-8 文本和图片；遇到 PDF、Office 或其他二进制文件时，应使用 `ocr_parse_file` 生成 Markdown 后再读取

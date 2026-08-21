@@ -156,6 +156,7 @@ class PostgresManager(metaclass=SingletonMeta):
     async def create_tables(self):
         """创建所有表（知识库和业务表）"""
         self._check_initialized()
+        await self.ensure_legacy_schema()
         async with self.async_engine.begin() as conn:
             await conn.run_sync(KnowledgeBase.metadata.create_all)
             await conn.run_sync(BusinessBase.metadata.create_all)
@@ -164,9 +165,173 @@ class PostgresManager(metaclass=SingletonMeta):
     async def create_business_tables(self):
         """创建所有业务数据表"""
         self._check_initialized()
+        await self.ensure_legacy_schema()
         async with self.async_engine.begin() as conn:
             await conn.run_sync(BusinessBase.metadata.create_all)
         logger.info("PostgreSQL business tables created/checked")
+
+    async def ensure_legacy_schema(self):
+        """桥接 0.6.x 企业分支的基础列名，确保后续建表和 schema 演进可以执行。"""
+        self._check_initialized()
+        stmts = [
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'user_id'
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'uid'
+                ) THEN
+                    ALTER TABLE users RENAME COLUMN user_id TO uid;
+                END IF;
+            END $$
+            """,
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'knowledge_bases' AND column_name = 'db_id'
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'knowledge_bases' AND column_name = 'kb_id'
+                ) THEN
+                    ALTER TABLE knowledge_bases RENAME COLUMN db_id TO kb_id;
+                END IF;
+
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'knowledge_files' AND column_name = 'db_id'
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'knowledge_files' AND column_name = 'kb_id'
+                ) THEN
+                    ALTER TABLE knowledge_files RENAME COLUMN db_id TO kb_id;
+                END IF;
+
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'message_feedbacks' AND column_name = 'user_id'
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'message_feedbacks' AND column_name = 'uid'
+                ) THEN
+                    ALTER TABLE message_feedbacks RENAME COLUMN user_id TO uid;
+                END IF;
+
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'conversations' AND column_name = 'user_id'
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'conversations' AND column_name = 'uid'
+                ) THEN
+                    ALTER TABLE conversations RENAME COLUMN user_id TO uid;
+                END IF;
+
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'agent_runs' AND column_name = 'user_id'
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'agent_runs' AND column_name = 'uid'
+                ) THEN
+                    ALTER TABLE agent_runs RENAME COLUMN user_id TO uid;
+                END IF;
+            END $$
+            """,
+            "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS embedding_model_spec VARCHAR(512)",
+            "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS llm_model_spec VARCHAR(512)",
+            "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS created_by VARCHAR(64)",
+            "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS run_type VARCHAR(32) NOT NULL DEFAULT 'chat'",
+            "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS conversation_id INTEGER",
+            "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS input_message_id INTEGER",
+            "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS output_message_id INTEGER",
+            "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS last_event_id VARCHAR(64)",
+            "ALTER TABLE IF EXISTS messages ADD COLUMN IF NOT EXISTS run_id VARCHAR(64)",
+            "ALTER TABLE IF EXISTS messages ADD COLUMN IF NOT EXISTS request_id VARCHAR(64)",
+            (
+                "ALTER TABLE IF EXISTS messages ADD COLUMN IF NOT EXISTS "
+                "delivery_status VARCHAR(32) NOT NULL DEFAULT 'complete'"
+            ),
+            "ALTER TABLE IF EXISTS skills DROP COLUMN IF EXISTS is_builtin",
+            """
+            DO $$
+            BEGIN
+                IF to_regclass('public.conversations') IS NOT NULL THEN
+                    UPDATE conversations SET agent_id = 'default-chatbot' WHERE agent_id = 'ChatbotAgent';
+                END IF;
+            END $$
+            """,
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'knowledge_bases' AND column_name = 'embed_info'
+                ) THEN
+                    UPDATE knowledge_bases
+                    SET embedding_model_spec = COALESCE(embedding_model_spec, embed_info->>'model_id')
+                    WHERE embed_info IS NOT NULL;
+                END IF;
+
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'knowledge_bases' AND column_name = 'llm_info'
+                ) THEN
+                    UPDATE knowledge_bases
+                    SET llm_model_spec = COALESCE(llm_model_spec, llm_info->>'model_id')
+                    WHERE llm_info IS NOT NULL;
+                END IF;
+            END $$
+            """,
+            """
+            DO $$
+            BEGIN
+                IF to_regclass('public.mcp_servers') IS NOT NULL THEN
+                    ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS id SERIAL;
+                    ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS slug VARCHAR(100);
+                    UPDATE mcp_servers SET slug = name WHERE slug IS NULL;
+                    ALTER TABLE mcp_servers ALTER COLUMN id SET NOT NULL;
+                    ALTER TABLE mcp_servers ALTER COLUMN slug SET NOT NULL;
+
+                    IF EXISTS (
+                        SELECT 1
+                        FROM pg_constraint
+                        WHERE conrelid = 'public.mcp_servers'::regclass
+                          AND contype = 'p'
+                          AND pg_get_constraintdef(oid) = 'PRIMARY KEY (name)'
+                    ) THEN
+                        ALTER TABLE mcp_servers DROP CONSTRAINT mcp_servers_pkey;
+                    END IF;
+
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint
+                        WHERE conrelid = 'public.mcp_servers'::regclass AND contype = 'p'
+                    ) THEN
+                        ALTER TABLE mcp_servers ADD CONSTRAINT mcp_servers_pkey PRIMARY KEY (id);
+                    END IF;
+                END IF;
+            END $$
+            """,
+            """
+            DO $$
+            BEGIN
+                IF to_regclass('public.users') IS NOT NULL THEN
+                    CREATE UNIQUE INDEX IF NOT EXISTS ix_users_uid ON users(uid);
+                END IF;
+                IF to_regclass('public.mcp_servers') IS NOT NULL THEN
+                    CREATE UNIQUE INDEX IF NOT EXISTS ix_mcp_servers_slug ON mcp_servers(slug);
+                END IF;
+            END $$
+            """,
+        ]
+
+        async with self.async_engine.begin() as conn:
+            for stmt in stmts:
+                await conn.execute(text(stmt))
 
     async def drop_tables(self):
         """删除所有表（慎用！）"""

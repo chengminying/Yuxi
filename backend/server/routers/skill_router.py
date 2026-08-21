@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
 from yuxi.agents.skills.service import (
+    PERSONAL_SKILL_SOURCE_TYPE,
+    ResolvedSkill,
     confirm_personal_skill_install_draft,
     confirm_skill_install_draft,
     create_skill_node,
@@ -126,6 +128,12 @@ def _summarize_results(results: list[dict]) -> dict[str, int]:
 
 def _serialize_skill_for_user(item, user: User) -> dict:
     data = item.to_dict()
+    if isinstance(item, ResolvedSkill) and item.source_scope == PERSONAL_SKILL_SOURCE_TYPE:
+        data["can_manage"] = True
+        data["effective_permission"] = "manage"
+        data["is_builtin"] = False
+        return data
+
     data["can_manage"] = user_can_manage_skill(user, item)
     data["effective_permission"] = resolve_skill_permission(user, item).value
     data["is_builtin"] = is_builtin_skill(item)
